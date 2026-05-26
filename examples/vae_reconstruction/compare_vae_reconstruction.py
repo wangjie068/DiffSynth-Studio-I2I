@@ -6,6 +6,7 @@ import json
 import math
 import re
 import urllib.request
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
@@ -135,12 +136,26 @@ def parse_args() -> argparse.Namespace:
         help="Size of non-overlapping patches used to rank where errors concentrate.",
     )
     parser.add_argument(
+        "--attention-query-chunk-size",
+        type=int,
+        default=512,
+        help=(
+            "Chunk only VAE attention queries to reduce peak memory while preserving full-image "
+            "encode/decode. Set 0 to call native attention without chunking."
+        ),
+    )
+    parser.add_argument(
         "--error-scale",
         type=float,
         default=4.0,
         help="Brightness multiplier for saved grayscale absolute-error visualization only.",
     )
     parser.add_argument("--download-only", action="store_true", help="Download selected VAE files and exit.")
+    parser.add_argument(
+        "--assemble-only",
+        action="store_true",
+        help="Do not load VAEs; rebuild comparisons and metrics from recon_MODEL.png files already in output-dir.",
+    )
     parser.add_argument("--strict", action="store_true", help="Stop when any selected VAE fails.")
     return parser.parse_args()
 
@@ -217,34 +232,71 @@ def model_vram_config(device: str, dtype: torch.dtype) -> dict:
     }
 
 
-def reconstruct(spec: VAESpec, input_tensor: torch.Tensor, args: argparse.Namespace) -> tuple[torch.Tensor, tuple]:
+@contextmanager
+def attention_query_chunking(chunk_size: int):
+    """Evaluate the same global SDPA in query chunks to avoid materializing a huge score tensor."""
+    if chunk_size <= 0:
+        yield
+        return
+
+    original_sdpa = F.scaled_dot_product_attention
+
+    def chunked_sdpa(query, key, value, *positional_args, **keyword_args):
+        attn_mask = positional_args[0] if positional_args else keyword_args.get("attn_mask")
+        is_causal = (
+            positional_args[2]
+            if len(positional_args) > 2
+            else keyword_args.get("is_causal", False)
+        )
+        if query.shape[-2] <= chunk_size or attn_mask is not None or is_causal:
+            return original_sdpa(query, key, value, *positional_args, **keyword_args)
+        output_chunks = [
+            original_sdpa(query_chunk, key, value, *positional_args, **keyword_args)
+            for query_chunk in query.split(chunk_size, dim=-2)
+        ]
+        return torch.cat(output_chunks, dim=-2)
+
+    F.scaled_dot_product_attention = chunked_sdpa
+    try:
+        yield
+    finally:
+        F.scaled_dot_product_attention = original_sdpa
+
+
+def reconstruct(spec: VAESpec, input_tensor: torch.Tensor, args: argparse.Namespace) -> tuple[torch.Tensor, dict]:
     dtype = dtype_from_name(args.dtype)
     path = download_checkpoint(spec, args)
     pool = ModelPool()
     pool.auto_load_model(path, vram_config=model_vram_config(args.device, dtype))
-    model_input = input_tensor.to(device=args.device, dtype=dtype)
+    if spec.adapter == "pair":
+        encoder = pool.fetch_model(spec.model_names[0])
+        decoder = pool.fetch_model(spec.model_names[1])
+    else:
+        vae = pool.fetch_model(spec.model_names[0])
 
-    with torch.inference_mode():
+    model_input = input_tensor.to(device=args.device, dtype=dtype)
+    with torch.inference_mode(), attention_query_chunking(args.attention_query_chunk_size):
         if spec.adapter == "pair":
-            encoder = pool.fetch_model(spec.model_names[0])
-            decoder = pool.fetch_model(spec.model_names[1])
             latent = encoder(model_input)
             reconstruction = decoder(latent)
         else:
-            vae = pool.fetch_model(spec.model_names[0])
             if spec.adapter == "posterior_mode":
                 latent = vae.encode(model_input).mode()
             else:
                 latent = vae.encode(model_input)
             reconstruction = vae.decode(latent)
-
-    latent_shape = tuple(latent.shape)
+    run_info = {
+        "latent_shape": tuple(latent.shape),
+        "attention_query_chunk_size": args.attention_query_chunk_size,
+    }
     reconstruction = reconstruction.detach().float().cpu()
-    del latent, model_input, pool
+    del latent, model_input
+
+    del pool
     gc.collect()
     if args.device.startswith("cuda") and torch.cuda.is_available():
         torch.cuda.empty_cache()
-    return reconstruction, latent_shape
+    return reconstruction, run_info
 
 
 def parse_rois(values: list[str], width: int, height: int) -> list[dict]:
@@ -346,7 +398,8 @@ def main() -> None:
     args.output_dir.mkdir(parents=True, exist_ok=True)
     original = open_image(args.image)
     original.save(args.output_dir / "input_original.png")
-    multiple = math.lcm(*(spec.latent_factor for spec in selected_specs))
+    # Keep preprocessing identical when reconstructions are produced in separate runs.
+    multiple = math.lcm(*(spec.latent_factor for spec in VAE_SPECS.values()))
     input_tensor, input_info = image_to_padded_tensor(original, multiple)
     regions = parse_rois(args.roi, original.width, original.height)
 
@@ -356,6 +409,7 @@ def main() -> None:
         "dtype": args.dtype,
         "device": args.device,
         "download_source": args.download_source,
+        "attention_query_chunk_size": args.attention_query_chunk_size,
         "regions": regions,
         "models": [],
         "errors": [],
@@ -363,47 +417,63 @@ def main() -> None:
     metric_rows = []
     patch_rows = []
     reconstructions: list[tuple[str, Image.Image]] = []
-    for spec in selected_specs:
-        print(f"\n[run] {spec.key}: {spec.label}")
-        try:
-            output_tensor, latent_shape = reconstruct(spec, input_tensor, args)
-            reconstruction = tensor_to_image(
-                output_tensor, input_info["original_height"], input_info["original_width"]
-            )
-            reconstruction.save(args.output_dir / f"recon_{spec.key}.png")
-            save_error_map(
-                original,
-                reconstruction,
-                args.output_dir / f"error_x{args.error_scale:g}_{spec.key}.png",
-                args.error_scale,
-            )
-            reconstructions.append((spec.key, reconstruction))
-            result_manifest["models"].append({**asdict(spec), "latent_shape": latent_shape})
-            for region in regions:
-                row = {"model": spec.key, "region": region["name"], **dict(zip(("x0", "y0", "x1", "y1"), region["box"]))}
-                row.update(metrics(original, reconstruction, region["box"]))
-                metric_rows.append(row)
-                if region["name"] != "full":
-                    reconstruction.crop(region["box"]).save(
-                        args.output_dir / f"recon_{spec.key}__roi_{region['name']}.png"
-                    )
-                    save_error_map(
-                        original,
-                        reconstruction,
-                        args.output_dir / f"error_x{args.error_scale:g}_{spec.key}__roi_{region['name']}.png",
-                        args.error_scale,
-                        region["box"],
-                    )
-            patch_rows.extend(patch_metric_rows(original, reconstruction, spec.key, args.patch_size))
-        except Exception as exc:
-            result_manifest["errors"].append({"model": spec.key, "error": repr(exc)})
-            print(f"[failed] {spec.key}: {exc!r}")
-            if args.strict:
-                raise
-        finally:
-            gc.collect()
-            if args.device.startswith("cuda") and torch.cuda.is_available():
-                torch.cuda.empty_cache()
+
+    def add_reconstruction(spec: VAESpec, reconstruction: Image.Image, run_info: dict) -> None:
+        save_error_map(
+            original,
+            reconstruction,
+            args.output_dir / f"error_x{args.error_scale:g}_{spec.key}.png",
+            args.error_scale,
+        )
+        reconstructions.append((spec.key, reconstruction))
+        result_manifest["models"].append({**asdict(spec), **run_info})
+        for region in regions:
+            row = {"model": spec.key, "region": region["name"], **dict(zip(("x0", "y0", "x1", "y1"), region["box"]))}
+            row.update(metrics(original, reconstruction, region["box"]))
+            metric_rows.append(row)
+            if region["name"] != "full":
+                reconstruction.crop(region["box"]).save(
+                    args.output_dir / f"recon_{spec.key}__roi_{region['name']}.png"
+                )
+                save_error_map(
+                    original,
+                    reconstruction,
+                    args.output_dir / f"error_x{args.error_scale:g}_{spec.key}__roi_{region['name']}.png",
+                    args.error_scale,
+                    region["box"],
+                )
+        patch_rows.extend(patch_metric_rows(original, reconstruction, spec.key, args.patch_size))
+
+    if args.assemble_only:
+        for spec in selected_specs:
+            path = args.output_dir / f"recon_{spec.key}.png"
+            if not path.exists():
+                message = f"Missing reconstruction for {spec.key}: {path}"
+                result_manifest["errors"].append({"model": spec.key, "error": message})
+                print(f"[missing] {message}")
+                if args.strict:
+                    raise FileNotFoundError(message)
+                continue
+            add_reconstruction(spec, Image.open(path).convert("RGB"), {"assembled_from": str(path)})
+    else:
+        for spec in selected_specs:
+            print(f"\n[run] {spec.key}: {spec.label}")
+            try:
+                output_tensor, run_info = reconstruct(spec, input_tensor, args)
+                reconstruction = tensor_to_image(
+                    output_tensor, input_info["original_height"], input_info["original_width"]
+                )
+                reconstruction.save(args.output_dir / f"recon_{spec.key}.png")
+                add_reconstruction(spec, reconstruction, run_info)
+            except Exception as exc:
+                result_manifest["errors"].append({"model": spec.key, "error": repr(exc)})
+                print(f"[failed] {spec.key}: {exc!r}")
+                if args.strict:
+                    raise
+            finally:
+                gc.collect()
+                if args.device.startswith("cuda") and torch.cuda.is_available():
+                    torch.cuda.empty_cache()
 
     if not reconstructions:
         raise RuntimeError("Every selected VAE failed; see errors printed above.")
