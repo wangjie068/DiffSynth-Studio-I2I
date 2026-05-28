@@ -85,6 +85,23 @@ def prepare_pair(args: argparse.Namespace) -> None:
     print(json.dumps(metadata, indent=2))
 
 
+def require_file(path: str | Path, role: str, auto_download: bool = False) -> Path:
+    resolved = Path(path)
+    if not resolved.is_file():
+        if auto_download and role == "source image":
+            print(f"Missing source image, downloading to {resolved}", flush=True)
+            download_image(SOURCE_URL, resolved)
+        elif auto_download and role == "target image":
+            print(f"Missing target image, downloading to {resolved}", flush=True)
+            download_image(TARGET_URL, resolved)
+    if not resolved.is_file():
+        raise SystemExit(
+            f"Missing {role}: {resolved}\n"
+            "Pass a valid path, or use the default Amazon source/target paths so the script can download them."
+        )
+    return resolved
+
+
 def get_torch_dtype(dtype_name: str):
     import torch
 
@@ -701,7 +718,8 @@ def resolve_model_names(names: list[str]) -> list[str]:
 
 def generate_one(args: argparse.Namespace) -> None:
     spec = MODEL_MAP[args.model]
-    source = Image.open(args.source).convert("RGB")
+    source_path = require_file(args.source, "source image", auto_download=True)
+    source = Image.open(source_path).convert("RGB")
     output_dir = Path(args.output_dir) / spec.name
     output_dir.mkdir(parents=True, exist_ok=True)
     steps = args.num_inference_steps or spec.default_steps
@@ -726,7 +744,7 @@ def generate_one(args: argparse.Namespace) -> None:
         "model": spec.name,
         "family": spec.family,
         "description": spec.description,
-        "source": str(args.source),
+        "source": str(source_path),
         "generated": str(output_path),
         "target_was_not_used_for_generation": True,
         "prompt": args.prompt,
@@ -791,9 +809,12 @@ def horizontal_montage(tiles: list[Image.Image]) -> Image.Image:
 def compare_one(args: argparse.Namespace) -> None:
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
-    source = Image.open(args.source).convert("RGB")
-    target = Image.open(args.target).convert("RGB")
-    generated = Image.open(args.generated).convert("RGB")
+    source_path = require_file(args.source, "source image", auto_download=True)
+    target_path = require_file(args.target, "target image", auto_download=True)
+    generated_path = require_file(args.generated, "generated image")
+    source = Image.open(source_path).convert("RGB")
+    target = Image.open(target_path).convert("RGB")
+    generated = Image.open(generated_path).convert("RGB")
     generated_aligned = generated.resize(target.size, Image.Resampling.LANCZOS)
     source_preview = source.resize(target.size, Image.Resampling.LANCZOS)
 
@@ -820,9 +841,9 @@ def compare_one(args: argparse.Namespace) -> None:
             ).save(output_dir / f"comparison_{name}.png")
 
     result = {
-        "source": str(args.source),
-        "target": str(args.target),
-        "generated": str(args.generated),
+        "source": str(source_path),
+        "target": str(target_path),
+        "generated": str(generated_path),
         "metrics": metrics,
         "note": (
             "Pixel metrics measure target-layout similarity only. For source IP/text preservation, "
@@ -839,6 +860,8 @@ def compare_one(args: argparse.Namespace) -> None:
 
 def command_run_all(args: argparse.Namespace) -> None:
     model_names = resolve_model_names(args.models)
+    source_path = require_file(args.source, "source image", auto_download=True)
+    target_path = require_file(args.target, "target image", auto_download=True)
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     results_path = output_dir / "results.jsonl"
@@ -856,7 +879,7 @@ def command_run_all(args: argparse.Namespace) -> None:
                 "--model",
                 model,
                 "--source",
-                args.source,
+                str(source_path),
                 "--output-dir",
                 str(output_dir),
                 "--seed",
@@ -896,7 +919,7 @@ def command_run_all(args: argparse.Namespace) -> None:
                 "--source",
                 args.source,
                 "--target",
-                args.target,
+                str(target_path),
                 "--generated",
                 str(generated),
                 "--output-dir",

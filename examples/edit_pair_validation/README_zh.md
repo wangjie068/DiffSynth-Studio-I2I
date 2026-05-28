@@ -18,7 +18,9 @@ python examples/edit_pair_validation/all_i2i_reference_to_target.py prepare \
   --output-dir data/edit_pair_validation/amazon_lipcare
 ```
 
-会生成：
+这一步现在是可选的。后面的 `generate` / `compare` / `run-all` 如果发现默认路径下没有 `source.jpg` 或 `target.jpg`，会先自动下载，再继续运行。
+
+预下载会生成：
 
 ```text
 data/edit_pair_validation/amazon_lipcare/source.jpg
