@@ -1,6 +1,7 @@
 import argparse
 import csv
 import gc
+import inspect
 import json
 import math
 import os
@@ -124,6 +125,7 @@ def qwen_runner(
     use_list_input: bool,
     zero_cond_t: bool = False,
     lightning: bool = False,
+    denoising_strength: float | None = None,
 ):
     import torch
 
@@ -677,6 +679,21 @@ MODEL_SPECS = [
 MODEL_MAP = {spec.name: spec for spec in MODEL_SPECS}
 
 
+RUNNER_COMMON_KEYS = {
+    "source",
+    "prompt",
+    "negative_prompt",
+    "seed",
+    "height",
+    "width",
+    "steps",
+    "cfg_scale",
+    "dtype",
+    "device",
+    "denoising_strength",
+}
+
+
 def list_models(args: argparse.Namespace) -> None:
     rows = []
     for spec in MODEL_SPECS:
@@ -699,6 +716,33 @@ def list_models(args: argparse.Namespace) -> None:
                 f"steps={row['default_steps']:<3} cfg={row['default_cfg']:<4} "
                 f"{row['description']}"
             )
+
+
+def self_test(args: argparse.Namespace) -> None:
+    dummy_image = Image.new("RGB", (64, 64), "white")
+    common_kwargs = {
+        "source": dummy_image,
+        "prompt": "test prompt",
+        "negative_prompt": "",
+        "seed": 0,
+        "height": 64,
+        "width": 64,
+        "steps": 1,
+        "cfg_scale": 1.0,
+        "dtype": "bfloat16",
+        "device": "cuda",
+        "denoising_strength": 0.85,
+    }
+    for spec in MODEL_SPECS:
+        unexpected = sorted(set(common_kwargs) - RUNNER_COMMON_KEYS)
+        if unexpected:
+            raise SystemExit(f"Unexpected common keys: {unexpected}")
+        if not any(
+            parameter.kind == inspect.Parameter.VAR_KEYWORD
+            for parameter in inspect.signature(spec.runner).parameters.values()
+        ):
+            raise SystemExit(f"{spec.name} runner must accept **kwargs")
+    print(f"self-test ok: {len(MODEL_SPECS)} model adapters accept common kwargs")
 
 
 def resolve_model_names(names: list[str]) -> list[str]:
@@ -917,7 +961,7 @@ def command_run_all(args: argparse.Namespace) -> None:
                 __file__,
                 "compare",
                 "--source",
-                args.source,
+                str(source_path),
                 "--target",
                 str(target_path),
                 "--generated",
@@ -974,6 +1018,9 @@ def build_parser() -> argparse.ArgumentParser:
     list_parser = subparsers.add_parser("list-models")
     list_parser.add_argument("--json", action="store_true")
     list_parser.set_defaults(func=list_models)
+
+    self_test_parser = subparsers.add_parser("self-test")
+    self_test_parser.set_defaults(func=self_test)
 
     prepare = subparsers.add_parser("prepare")
     prepare.add_argument("--source-url", default=SOURCE_URL)
