@@ -240,28 +240,33 @@ def qwen_runner(
         torch_dtype=get_torch_dtype(dtype),
         device=device,
         model_configs=[
-            ModelConfig(
+            model_config_for_pattern(
+                ModelConfig,
                 model_id=model_id,
-                origin_file_pattern="transformer/diffusion_pytorch_model*.safetensors",
+                pattern="transformer/diffusion_pytorch_model*.safetensors",
             ),
-            ModelConfig(
+            model_config_for_pattern(
+                ModelConfig,
                 model_id="Qwen/Qwen-Image",
-                origin_file_pattern="text_encoder/model*.safetensors",
+                pattern="text_encoder/model*.safetensors",
             ),
-            ModelConfig(
+            model_config_for_pattern(
+                ModelConfig,
                 model_id="Qwen/Qwen-Image",
-                origin_file_pattern="vae/diffusion_pytorch_model.safetensors",
+                pattern="vae/diffusion_pytorch_model.safetensors",
             ),
         ],
-        processor_config=ModelConfig(
+        processor_config=model_config_for_pattern(
+            ModelConfig,
             model_id="Qwen/Qwen-Image-Edit",
-            origin_file_pattern="processor/",
+            pattern="processor/",
         ),
     )
     if lightning:
-        lora = ModelConfig(
+        lora = model_config_for_pattern(
+            ModelConfig,
             model_id="lightx2v/Qwen-Image-Edit-2511-Lightning",
-            origin_file_pattern="Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors",
+            pattern="Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors",
         )
         pipe.load_lora(pipe.dit, lora, alpha=1)
         pipe.scheduler = FlowMatchScheduler("Qwen-Image-Lightning")
@@ -387,9 +392,9 @@ def hidream_runner(*, model_id: str, dev: bool = False, **kwargs):
         torch_dtype=get_torch_dtype(kwargs["dtype"]),
         device=kwargs["device"],
         model_configs=[
-            ModelConfig(model_id=model_id, origin_file_pattern="model-*.safetensors"),
+            model_config_for_pattern(ModelConfig, model_id=model_id, pattern="model-*.safetensors"),
         ],
-        processor_config=ModelConfig(model_id=model_id, origin_file_pattern="./"),
+        processor_config=model_config_for_pattern(ModelConfig, model_id=model_id, pattern="./"),
     )
     if dev:
         from diffsynth.diffusion import HiDreamO1FlashScheduler
@@ -423,32 +428,42 @@ def run_hidream_o1_image_dev(**kwargs):
 
 
 def run_z_image_omni_base(**kwargs):
+    raise RuntimeError(
+        "Tongyi-MAI/Z-Image-Omni-Base weights are not publicly available in the "
+        "checked official model repos. This adapter is kept only as a placeholder; "
+        "do not include it in default all_relevant runs."
+    )
     from diffsynth.pipelines.z_image import ModelConfig, ZImagePipeline
 
     pipe = ZImagePipeline.from_pretrained(
         torch_dtype=get_torch_dtype(kwargs["dtype"]),
         device=kwargs["device"],
         model_configs=[
-            ModelConfig(
+            model_config_for_pattern(
+                ModelConfig,
                 model_id="Tongyi-MAI/Z-Image-Omni-Base",
-                origin_file_pattern="transformer/*.safetensors",
+                pattern="transformer/*.safetensors",
             ),
-            ModelConfig(
+            model_config_for_pattern(
+                ModelConfig,
                 model_id="Tongyi-MAI/Z-Image-Omni-Base",
-                origin_file_pattern="siglip/model.safetensors",
+                pattern="siglip/model.safetensors",
             ),
-            ModelConfig(
+            model_config_for_pattern(
+                ModelConfig,
                 model_id="Tongyi-MAI/Z-Image-Turbo",
-                origin_file_pattern="text_encoder/*.safetensors",
+                pattern="text_encoder/*.safetensors",
             ),
-            ModelConfig(
+            model_config_for_pattern(
+                ModelConfig,
                 model_id="Tongyi-MAI/Z-Image-Turbo",
-                origin_file_pattern="vae/diffusion_pytorch_model.safetensors",
+                pattern="vae/diffusion_pytorch_model.safetensors",
             ),
         ],
-        tokenizer_config=ModelConfig(
+        tokenizer_config=model_config_for_pattern(
+            ModelConfig,
             model_id="Tongyi-MAI/Z-Image-Turbo",
-            origin_file_pattern="tokenizer/",
+            pattern="tokenizer/",
         ),
     )
     return pipe(
@@ -468,21 +483,25 @@ def run_flux1_kontext_dev(**kwargs):
         torch_dtype=get_torch_dtype(kwargs["dtype"]),
         device=kwargs["device"],
         model_configs=[
-            ModelConfig(
+            model_config_for_pattern(
+                ModelConfig,
                 model_id="black-forest-labs/FLUX.1-Kontext-dev",
-                origin_file_pattern="flux1-kontext-dev.safetensors",
+                pattern="flux1-kontext-dev.safetensors",
             ),
-            ModelConfig(
+            model_config_for_pattern(
+                ModelConfig,
                 model_id="black-forest-labs/FLUX.1-dev",
-                origin_file_pattern="text_encoder/model.safetensors",
+                pattern="text_encoder/model*.safetensors",
             ),
-            ModelConfig(
+            model_config_for_pattern(
+                ModelConfig,
                 model_id="black-forest-labs/FLUX.1-dev",
-                origin_file_pattern="text_encoder_2/*.safetensors",
+                pattern="text_encoder_2/model*.safetensors",
             ),
-            ModelConfig(
+            model_config_for_pattern(
+                ModelConfig,
                 model_id="black-forest-labs/FLUX.1-dev",
-                origin_file_pattern="ae.safetensors",
+                pattern="ae.safetensors",
             ),
         ],
     )
@@ -505,17 +524,20 @@ def run_step1x_edit(**kwargs):
         torch_dtype=get_torch_dtype(kwargs["dtype"]),
         device=kwargs["device"],
         model_configs=[
-            ModelConfig(
+            model_config_for_pattern(
+                ModelConfig,
                 model_id="Qwen/Qwen2.5-VL-7B-Instruct",
-                origin_file_pattern="model-*.safetensors",
+                pattern="model-*.safetensors",
             ),
-            ModelConfig(
+            model_config_for_pattern(
+                ModelConfig,
                 model_id="stepfun-ai/Step1X-Edit",
-                origin_file_pattern="step1x-edit-i1258.safetensors",
+                pattern="step1x-edit-i1258.safetensors",
             ),
-            ModelConfig(
+            model_config_for_pattern(
+                ModelConfig,
                 model_id="stepfun-ai/Step1X-Edit",
-                origin_file_pattern="vae.safetensors",
+                pattern="vae.safetensors",
             ),
         ],
     )
@@ -547,30 +569,36 @@ def run_nexus_gen_editing(**kwargs):
         torch_dtype=get_torch_dtype(kwargs["dtype"]),
         device=kwargs["device"],
         model_configs=[
-            ModelConfig(
+            model_config_for_pattern(
+                ModelConfig,
                 model_id="DiffSynth-Studio/Nexus-GenV2",
-                origin_file_pattern="model*.safetensors",
+                pattern="model*.safetensors",
             ),
-            ModelConfig(
+            model_config_for_pattern(
+                ModelConfig,
                 model_id="DiffSynth-Studio/Nexus-GenV2",
-                origin_file_pattern="edit_decoder.bin",
+                pattern="edit_decoder.bin",
             ),
-            ModelConfig(
+            model_config_for_pattern(
+                ModelConfig,
                 model_id="black-forest-labs/FLUX.1-dev",
-                origin_file_pattern="text_encoder/model.safetensors",
+                pattern="text_encoder/model*.safetensors",
             ),
-            ModelConfig(
+            model_config_for_pattern(
+                ModelConfig,
                 model_id="black-forest-labs/FLUX.1-dev",
-                origin_file_pattern="text_encoder_2/*.safetensors",
+                pattern="text_encoder_2/model*.safetensors",
             ),
-            ModelConfig(
+            model_config_for_pattern(
+                ModelConfig,
                 model_id="black-forest-labs/FLUX.1-dev",
-                origin_file_pattern="ae.safetensors",
+                pattern="ae.safetensors",
             ),
         ],
-        nexus_gen_processor_config=ModelConfig(
+        nexus_gen_processor_config=model_config_for_pattern(
+            ModelConfig,
             model_id="DiffSynth-Studio/Nexus-GenV2",
-            origin_file_pattern="processor/",
+            pattern="processor/",
         ),
     )
     return pipe(
@@ -603,34 +631,38 @@ def flux2_runner(*, variant: str, base_variant: str | None = None, dev: bool = F
             "computation_device": kwargs["device"],
         }
         model_configs = [
-            ModelConfig(
+            model_config_for_pattern(
+                ModelConfig,
                 model_id="black-forest-labs/FLUX.2-dev",
-                origin_file_pattern="text_encoder/*.safetensors",
+                pattern="text_encoder/*.safetensors",
                 **vram_config,
             ),
-            ModelConfig(
+            model_config_for_pattern(
+                ModelConfig,
                 model_id="black-forest-labs/FLUX.2-dev",
-                origin_file_pattern="transformer/*.safetensors",
+                pattern="transformer/*.safetensors",
                 **vram_config,
             ),
-            ModelConfig(
+            model_config_for_pattern(
+                ModelConfig,
                 model_id="black-forest-labs/FLUX.2-dev",
-                origin_file_pattern="vae/diffusion_pytorch_model.safetensors",
+                pattern="vae/diffusion_pytorch_model.safetensors",
                 **vram_config,
             ),
         ]
-        tokenizer_config = ModelConfig(
+        tokenizer_config = model_config_for_pattern(
+            ModelConfig,
             model_id="black-forest-labs/FLUX.2-dev",
-            origin_file_pattern="tokenizer/",
+            pattern="tokenizer/",
         )
     else:
         transformer_model_id = base_variant or variant
         model_configs = [
-            ModelConfig(model_id=variant, origin_file_pattern="text_encoder/*.safetensors"),
-            ModelConfig(model_id=transformer_model_id, origin_file_pattern="transformer/*.safetensors"),
-            ModelConfig(model_id=variant, origin_file_pattern="vae/diffusion_pytorch_model.safetensors"),
+            model_config_for_pattern(ModelConfig, model_id=variant, pattern="text_encoder/*.safetensors"),
+            model_config_for_pattern(ModelConfig, model_id=transformer_model_id, pattern="transformer/*.safetensors"),
+            model_config_for_pattern(ModelConfig, model_id=variant, pattern="vae/diffusion_pytorch_model.safetensors"),
         ]
-        tokenizer_config = ModelConfig(model_id=variant, origin_file_pattern="tokenizer/")
+        tokenizer_config = model_config_for_pattern(ModelConfig, model_id=variant, pattern="tokenizer/")
     pipe = Flux2ImagePipeline.from_pretrained(
         torch_dtype=get_torch_dtype(kwargs["dtype"]),
         device=kwargs["device"],
@@ -690,28 +722,38 @@ def run_flux2_template_edit_4b(**kwargs):
         torch_dtype=get_torch_dtype(kwargs["dtype"]),
         device=kwargs["device"],
         model_configs=[
-            ModelConfig(
+            model_config_for_pattern(
+                ModelConfig,
                 model_id="black-forest-labs/FLUX.2-klein-base-4B",
-                origin_file_pattern="transformer/*.safetensors",
+                pattern="transformer/*.safetensors",
             ),
-            ModelConfig(
+            model_config_for_pattern(
+                ModelConfig,
                 model_id="black-forest-labs/FLUX.2-klein-4B",
-                origin_file_pattern="text_encoder/*.safetensors",
+                pattern="text_encoder/*.safetensors",
             ),
-            ModelConfig(
+            model_config_for_pattern(
+                ModelConfig,
                 model_id="black-forest-labs/FLUX.2-klein-4B",
-                origin_file_pattern="vae/diffusion_pytorch_model.safetensors",
+                pattern="vae/diffusion_pytorch_model.safetensors",
             ),
         ],
-        tokenizer_config=ModelConfig(
+        tokenizer_config=model_config_for_pattern(
+            ModelConfig,
             model_id="black-forest-labs/FLUX.2-klein-4B",
-            origin_file_pattern="tokenizer/",
+            pattern="tokenizer/",
         ),
     )
     template = TemplatePipeline.from_pretrained(
         torch_dtype=get_torch_dtype(kwargs["dtype"]),
         device=kwargs["device"],
-        model_configs=[ModelConfig(model_id="DiffSynth-Studio/Template-KleinBase4B-Edit")],
+        model_configs=[
+            model_config_for_pattern(
+                ModelConfig,
+                model_id="DiffSynth-Studio/Template-KleinBase4B-Edit",
+                pattern="*",
+            )
+        ],
     )
     return template(
         pipe,
@@ -731,23 +773,27 @@ def run_anima_img2img(**kwargs):
         torch_dtype=get_torch_dtype(kwargs["dtype"]),
         device=kwargs["device"],
         model_configs=[
-            ModelConfig(
+            model_config_for_pattern(
+                ModelConfig,
                 model_id="circlestone-labs/Anima",
-                origin_file_pattern="split_files/diffusion_models/anima-preview.safetensors",
+                pattern="split_files/diffusion_models/anima-preview.safetensors",
             ),
-            ModelConfig(
+            model_config_for_pattern(
+                ModelConfig,
                 model_id="circlestone-labs/Anima",
-                origin_file_pattern="split_files/text_encoders/qwen_3_06b_base.safetensors",
+                pattern="split_files/text_encoders/qwen_3_06b_base.safetensors",
             ),
-            ModelConfig(
+            model_config_for_pattern(
+                ModelConfig,
                 model_id="circlestone-labs/Anima",
-                origin_file_pattern="split_files/vae/qwen_image_vae.safetensors",
+                pattern="split_files/vae/qwen_image_vae.safetensors",
             ),
         ],
-        tokenizer_config=ModelConfig(model_id="Qwen/Qwen3-0.6B", origin_file_pattern="./"),
-        tokenizer_t5xxl_config=ModelConfig(
+        tokenizer_config=model_config_for_pattern(ModelConfig, model_id="Qwen/Qwen3-0.6B", pattern="./"),
+        tokenizer_t5xxl_config=model_config_for_pattern(
+            ModelConfig,
             model_id="stabilityai/stable-diffusion-3.5-large",
-            origin_file_pattern="tokenizer_3/",
+            pattern="tokenizer_3/",
         ),
     )
     return pipe(
@@ -774,7 +820,16 @@ MODEL_SPECS = [
     ModelSpec("joyai_image_edit", "joyai", "JoyAI-Image-Edit", 30, 5.0, run_joyai_image_edit),
     ModelSpec("hidream_o1_image", "hidream", "HiDream-O1-Image image-to-image/edit", 50, 4.0, run_hidream_o1_image),
     ModelSpec("hidream_o1_image_dev", "hidream", "HiDream-O1-Image-Dev image-to-image/edit", 28, 1.0, run_hidream_o1_image_dev),
-    ModelSpec("z_image_omni_base", "z_image", "Z-Image-Omni-Base edit_image", 40, 4.0, run_z_image_omni_base),
+    ModelSpec(
+        "z_image_omni_base",
+        "z_image",
+        "Z-Image-Omni-Base edit_image placeholder; public weights unavailable",
+        40,
+        4.0,
+        run_z_image_omni_base,
+        relevant=False,
+        notes="Excluded from all_relevant because public weights are not available.",
+    ),
     ModelSpec("flux1_kontext_dev", "flux", "FLUX.1-Kontext-dev", 50, 2.5, run_flux1_kontext_dev),
     ModelSpec("step1x_edit", "flux", "Step1X-Edit reference-image editing", 50, 6.0, run_step1x_edit),
     ModelSpec("nexus_gen_editing", "flux", "Nexus-GenV2 editing", 50, 2.0, run_nexus_gen_editing),
@@ -820,6 +875,9 @@ def qwen_common_download_entries(entries: list[tuple[str, str]]) -> None:
 def flux1_common_download_entries(entries: list[tuple[str, str]]) -> None:
     add_download_entry(entries, "black-forest-labs/FLUX.1-dev", "tokenizer/")
     add_download_entry(entries, "black-forest-labs/FLUX.1-dev", "tokenizer_2/")
+    add_download_entry(entries, "black-forest-labs/FLUX.1-dev", "text_encoder/model*.safetensors")
+    add_download_entry(entries, "black-forest-labs/FLUX.1-dev", "text_encoder_2/model*.safetensors")
+    add_download_entry(entries, "black-forest-labs/FLUX.1-dev", "ae.safetensors")
 
 
 def download_entries_for_model(model_name: str) -> list[tuple[str, str]]:
@@ -863,9 +921,6 @@ def download_entries_for_model(model_name: str) -> list[tuple[str, str]]:
     elif model_name == "flux1_kontext_dev":
         flux1_common_download_entries(entries)
         add_download_entry(entries, "black-forest-labs/FLUX.1-Kontext-dev", "flux1-kontext-dev.safetensors")
-        add_download_entry(entries, "black-forest-labs/FLUX.1-dev", "text_encoder/model.safetensors")
-        add_download_entry(entries, "black-forest-labs/FLUX.1-dev", "text_encoder_2/*.safetensors")
-        add_download_entry(entries, "black-forest-labs/FLUX.1-dev", "ae.safetensors")
     elif model_name == "step1x_edit":
         flux1_common_download_entries(entries)
         add_download_entry(entries, "Qwen/Qwen2.5-VL-7B-Instruct", "model-*.safetensors")
@@ -877,9 +932,6 @@ def download_entries_for_model(model_name: str) -> list[tuple[str, str]]:
         add_download_entry(entries, "DiffSynth-Studio/Nexus-GenV2", "model*.safetensors")
         add_download_entry(entries, "DiffSynth-Studio/Nexus-GenV2", "edit_decoder.bin")
         add_download_entry(entries, "DiffSynth-Studio/Nexus-GenV2", "processor/")
-        add_download_entry(entries, "black-forest-labs/FLUX.1-dev", "text_encoder/model.safetensors")
-        add_download_entry(entries, "black-forest-labs/FLUX.1-dev", "text_encoder_2/*.safetensors")
-        add_download_entry(entries, "black-forest-labs/FLUX.1-dev", "ae.safetensors")
     elif model_name == "flux2_dev":
         add_download_entry(entries, "black-forest-labs/FLUX.2-dev", "text_encoder/*.safetensors")
         add_download_entry(entries, "black-forest-labs/FLUX.2-dev", "transformer/*.safetensors")
@@ -1007,13 +1059,10 @@ def command_download_models(args: argparse.Namespace) -> None:
             pattern=pattern,
             prefer_local=False,
         )
-        if local_model_id != primary_model_id:
-            print(
-                f"[{index}/{len(entries)}] {local_model_id} :: {pattern} (local files matched)",
-                flush=True,
-            )
-        else:
-            print(f"[{index}/{len(entries)}] {primary_model_id} :: {pattern}", flush=True)
+        has_local_files = local_pattern_exists(local_model_id, pattern, args.model_base_path)
+        display_model_id = local_model_id if has_local_files else primary_model_id
+        suffix = " (local files matched)" if has_local_files else ""
+        print(f"[{index}/{len(entries)}] {display_model_id} :: {pattern}{suffix}", flush=True)
         if args.dry_run:
             continue
         sources = [args.download_source]
@@ -1058,6 +1107,31 @@ def command_download_models(args: argparse.Namespace) -> None:
         print("Dry run complete. No files were downloaded.")
     else:
         print("All requested model files are downloaded.")
+
+
+def command_verify_models(args: argparse.Namespace) -> None:
+    model_names = resolve_model_names(args.models)
+    entries = download_entries_for_models(model_names)
+    missing = []
+    print(f"Verifying {len(entries)} unique model file groups for {len(model_names)} models.")
+    print(f"model_base_path={args.model_base_path}")
+    for index, (model_id, pattern) in enumerate(entries, start=1):
+        resolved_model_id = repo_id_for_source(
+            model_id,
+            args.download_source,
+            model_base_path=args.model_base_path,
+            pattern=pattern,
+            prefer_local=True,
+        )
+        matched = local_pattern_exists(resolved_model_id, pattern, args.model_base_path)
+        status = "OK" if matched else "MISSING"
+        print(f"[{index}/{len(entries)}] {status:<7} {resolved_model_id} :: {pattern}", flush=True)
+        if not matched:
+            missing.append((resolved_model_id, pattern))
+    if missing:
+        print(f"\nMissing {len(missing)} file groups.")
+        raise SystemExit(1)
+    print("\nAll requested model file groups are present.")
 
 
 def resolve_model_names(names: list[str]) -> list[str]:
@@ -1505,6 +1579,19 @@ def build_parser() -> argparse.ArgumentParser:
     )
     download_parser.add_argument("--dry-run", action="store_true")
     download_parser.set_defaults(func=command_download_models)
+
+    verify_parser = subparsers.add_parser("verify-models")
+    verify_parser.add_argument("--models", nargs="+", default=["all_relevant"])
+    verify_parser.add_argument(
+        "--download-source",
+        choices=["modelscope", "huggingface"],
+        default=os.environ.get("DIFFSYNTH_DOWNLOAD_SOURCE", "modelscope"),
+    )
+    verify_parser.add_argument(
+        "--model-base-path",
+        default=os.environ.get("DIFFSYNTH_MODEL_BASE_PATH", "./models"),
+    )
+    verify_parser.set_defaults(func=command_verify_models)
 
     prepare = subparsers.add_parser("prepare")
     prepare.add_argument("--source-url", default=SOURCE_URL)

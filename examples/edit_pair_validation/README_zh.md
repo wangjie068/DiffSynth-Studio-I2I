@@ -75,6 +75,17 @@ bash examples/edit_pair_validation/download_all_i2i_models.sh \
 SKIP_IMAGES=1 bash examples/edit_pair_validation/download_all_i2i_models.sh --dry-run
 ```
 
+下载后建议先检查本地是否真的覆盖了推理需要的所有文件 pattern：
+
+```bash
+python examples/edit_pair_validation/all_i2i_reference_to_target.py verify-models \
+  --models all_relevant \
+  --model-base-path ./models \
+  --download-source huggingface
+```
+
+如果看到 `MISSING black-forest-labs/FLUX.1-dev :: text_encoder_2/model*.safetensors` 这类输出，说明对应 shard 没下全，需要重跑下载脚本或单独补该模型。`verify-models` 只检查本地文件，不访问网络。
+
 当前脚本纳入了仓库中明确能吃参考图并输出单张图的模型：
 
 ```text
@@ -87,7 +98,6 @@ firered_image_edit_1_1
 joyai_image_edit
 hidream_o1_image
 hidream_o1_image_dev
-z_image_omni_base
 flux1_kontext_dev
 step1x_edit
 nexus_gen_editing
@@ -101,6 +111,8 @@ anima_img2img
 ```
 
 没有混入视频 I2V、音频、纯 depth/canny/controlnet、inpaint-only、upscale-only、style-LoRA 模型，因为这些任务定义不同，不适合放在同一主榜里。仓库当前的 SD 1.5 / SDXL pipeline 公开 `__call__` 没有暴露 `input_image` 参数，所以也不放进 i2i 榜。
+
+`z_image_omni_base` 在代码里保留为占位项，但不属于 `all_relevant`：我没有在官方 Hugging Face / ModelScope 仓库里确认到 `Tongyi-MAI/Z-Image-Omni-Base` 公开权重。公开可见的是 `Tongyi-MAI/Z-Image` / `Z-Image-Turbo` 这类模型，但它们不是这里这个 edit-image adapter 所需的 Omni-Base 权重。
 
 ## 3. 先单独跑一个模型
 
@@ -206,7 +218,7 @@ python examples/edit_pair_validation/all_i2i_reference_to_target.py run-all \
   --source data/edit_pair_validation/amazon_lipcare/source.jpg \
   --target data/edit_pair_validation/amazon_lipcare/target.jpg \
   --output-dir outputs/edit_pair_validation/top_candidates \
-  --models qwen_image_edit_2511 flux1_kontext_dev flux2_klein_base_4b z_image_omni_base joyai_image_edit \
+  --models qwen_image_edit_2511 flux1_kontext_dev flux2_klein_base_4b joyai_image_edit \
   --seeds 0 1 2 \
   --height 1024 --width 1024 \
   --device cuda --dtype bfloat16
