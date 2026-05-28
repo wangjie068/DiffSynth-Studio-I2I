@@ -249,3 +249,29 @@ all_pass / N
 `flux2_dev` 默认带 CPU/GPU offload 配置，速度会慢一些，但更稳。
 
 `anima_img2img` 是传统 img2img baseline，不是现代 instruction edit 模型。它放进来是为了给底线参考，不应和 Qwen/Flux Kontext 这类模型做同等能力假设。
+
+## 7. GPU keepalive
+
+如果集群会因为模型加载阶段 GPU 利用率短暂为 0 而杀任务，可以在另一个终端单独运行一个保守的 keepalive。它会定期检查 `nvidia-smi`，只有当利用率低于阈值时才运行短促的小矩阵乘法；推理开始后利用率上升，它会自动休眠。
+
+```bash
+python examples/edit_pair_validation/gpu_keepalive.py \
+  --gpus 0 \
+  --threshold 3 \
+  --check-interval 5 \
+  --burn-seconds 2 \
+  --matrix-size 2048 \
+  --dtype float16
+```
+
+多卡：
+
+```bash
+python examples/edit_pair_validation/gpu_keepalive.py \
+  --gpus 0 1 2 3 \
+  --threshold 3 \
+  --check-interval 5 \
+  --burn-seconds 2
+```
+
+如果担心抢显存，把 `--matrix-size` 降到 `1024`；如果利用率拉不起来，再升到 `3072`。停止时直接 `Ctrl+C`。
