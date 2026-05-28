@@ -52,6 +52,8 @@ DOWNLOAD_SOURCE=huggingface MODEL_BASE_PATH=./models \
 
 脚本会自动处理少数模型在不同平台上的 repo id 差异，例如 JoyAI 在 ModelScope 是 `jd-opensource/JoyAI-Image-Edit`，在 Hugging Face 是 `jdopensource/JoyAI-Image-Edit`。
 
+推理和下载都会先检查本地 `models/` 里是否已经存在任一别名目录，并且该目录下能匹配当前要用的文件 pattern。比如 `models/jdopensource/JoyAI-Image-Edit/transformer/transformer.pth` 已存在，即使当前 `--download-source modelscope`，脚本也会优先使用本地已有文件，不会强制切到 `models/jd-opensource/JoyAI-Image-Edit`。
+
 如果希望 Hugging Face 失败时回退到 ModelScope，并且某个模型失败后继续下载其他模型：
 
 ```bash
@@ -175,6 +177,22 @@ python examples/edit_pair_validation/all_i2i_reference_to_target.py run-parallel
   --seeds 0 1 2 3 \
   --gpus 0 1 2 3 \
   --worker-device cuda \
+  --height 1024 --width 1024 \
+  --dtype bfloat16
+```
+
+如果模型是用 Hugging Face 下载的，推理也要固定同一个下载源，否则少数模型会因为 repo id 不同而换目录重新下载。例如 JoyAI 在 Hugging Face 下是 `models/jdopensource/JoyAI-Image-Edit`，在 ModelScope 下是 `models/jd-opensource/JoyAI-Image-Edit`：
+
+```bash
+python examples/edit_pair_validation/all_i2i_reference_to_target.py run-parallel \
+  --source data/edit_pair_validation/amazon_lipcare/source.jpg \
+  --target data/edit_pair_validation/amazon_lipcare/target.jpg \
+  --output-dir outputs/edit_pair_validation/all_i2i_parallel \
+  --models all_relevant \
+  --seeds 0 1 2 3 \
+  --gpus 0 1 2 3 \
+  --worker-device cuda \
+  --download-source huggingface \
   --height 1024 --width 1024 \
   --dtype bfloat16
 ```

@@ -1,6 +1,7 @@
 import argparse
 import csv
 import gc
+import glob
 import inspect
 import json
 import math
@@ -127,7 +128,58 @@ SOURCE_REPO_ID_OVERRIDES = {
 }
 
 
-def repo_id_for_source(model_id: str, download_source: str | None = None) -> str:
+def get_model_base_path() -> Path:
+    return Path(os.environ.get("DIFFSYNTH_MODEL_BASE_PATH", "./models"))
+
+
+def local_repo_exists(model_id: str, model_base_path: str | Path | None = None) -> bool:
+    base_path = Path(model_base_path) if model_base_path is not None else get_model_base_path()
+    return (base_path / model_id).exists()
+
+
+def pattern_to_glob(pattern: str | None) -> str:
+    if pattern in [None, "", "./"]:
+        return "*"
+    if pattern.endswith("/"):
+        return pattern + "*"
+    return pattern
+
+
+def local_pattern_exists(
+    model_id: str,
+    pattern: str | None,
+    model_base_path: str | Path | None = None,
+) -> bool:
+    base_path = Path(model_base_path) if model_base_path is not None else get_model_base_path()
+    root = base_path / model_id
+    if not root.exists():
+        return False
+    return bool(glob.glob(pattern_to_glob(pattern), root_dir=root))
+
+
+def repo_aliases(model_id: str) -> list[str]:
+    aliases = [model_id]
+    for (_, source_model_id), target_model_id in SOURCE_REPO_ID_OVERRIDES.items():
+        if source_model_id == model_id and target_model_id not in aliases:
+            aliases.append(target_model_id)
+        if target_model_id == model_id and source_model_id not in aliases:
+            aliases.append(source_model_id)
+    return aliases
+
+
+def repo_id_for_source(
+    model_id: str,
+    download_source: str | None = None,
+    model_base_path: str | Path | None = None,
+    pattern: str | None = None,
+    prefer_local: bool = True,
+) -> str:
+    if prefer_local:
+        for alias in repo_aliases(model_id):
+            if pattern is None and local_repo_exists(alias, model_base_path):
+                return alias
+            if pattern is not None and local_pattern_exists(alias, pattern, model_base_path):
+                return alias
     source = download_source or os.environ.get("DIFFSYNTH_DOWNLOAD_SOURCE", "modelscope")
     return SOURCE_REPO_ID_OVERRIDES.get((source.lower(), model_id), model_id)
 
@@ -259,7 +311,10 @@ def run_firered_11(**kwargs):
 def run_joyai_image_edit(**kwargs):
     from diffsynth.pipelines.joyai_image import JoyAIImagePipeline, ModelConfig
 
-    model_id = repo_id_for_source("jd-opensource/JoyAI-Image-Edit")
+    model_id = repo_id_for_source(
+        "jd-opensource/JoyAI-Image-Edit",
+        pattern="transformer/transformer.pth",
+    )
     pipe = JoyAIImagePipeline.from_pretrained(
         torch_dtype=get_torch_dtype(kwargs["dtype"]),
         device=kwargs["device"],
@@ -907,21 +962,50 @@ def command_download_models(args: argparse.Namespace) -> None:
     if not args.dry_run:
         from diffsynth.core.loader.config import ModelConfig
     for index, (model_id, pattern) in enumerate(entries, start=1):
-        primary_model_id = repo_id_for_source(model_id, args.download_source)
-        print(f"[{index}/{len(entries)}] {primary_model_id} :: {pattern}", flush=True)
+        local_model_id = repo_id_for_source(
+            model_id,
+            args.download_source,
+            model_base_path=args.model_base_path,
+            pattern=pattern,
+            prefer_local=True,
+        )
+        primary_model_id = repo_id_for_source(
+            model_id,
+            args.download_source,
+            model_base_path=args.model_base_path,
+            pattern=pattern,
+            prefer_local=False,
+        )
+        if local_model_id != primary_model_id:
+            print(
+                f"[{index}/{len(entries)}] {local_model_id} :: {pattern} (local files matched)",
+                flush=True,
+            )
+        else:
+            print(f"[{index}/{len(entries)}] {primary_model_id} :: {pattern}", flush=True)
         if args.dry_run:
             continue
         sources = [args.download_source]
         if args.fallback_source != "none" and args.fallback_source not in sources:
             sources.append(args.fallback_source)
         last_error = None
+        attempts = [("local", local_model_id)]
         for source in sources:
-            source_model_id = repo_id_for_source(model_id, source)
+            source_model_id = repo_id_for_source(
+                model_id,
+                source,
+                model_base_path=args.model_base_path,
+                pattern=pattern,
+                prefer_local=False,
+            )
+            if source_model_id not in [attempt[1] for attempt in attempts]:
+                attempts.append((source, source_model_id))
+        for source, source_model_id in attempts:
             try:
                 config = ModelConfig(
                     model_id=source_model_id,
                     origin_file_pattern=pattern,
-                    download_source=source,
+                    download_source=args.download_source if source == "local" else source,
                     local_model_path=args.model_base_path,
                 )
                 config.download_if_necessary()
@@ -1147,6 +1231,8 @@ def build_generate_command(
         command.extend(["--num-inference-steps", str(args.num_inference_steps)])
     if args.cfg_scale is not None:
         command.extend(["--cfg-scale", str(args.cfg_scale)])
+    if hasattr(args, "download_source") and args.download_source is not None:
+        command.extend(["--download-source", args.download_source])
     return command
 
 
@@ -1188,6 +1274,10 @@ def run_eval_job(
     row = {"model": job.model, "seed": job.seed}
     if job.gpu is not None:
         row["gpu"] = job.gpu
+    if env is None:
+        env = os.environ.copy()
+    if hasattr(args, "download_source") and args.download_source is not None:
+        env["DIFFSYNTH_DOWNLOAD_SOURCE"] = args.download_source
     gen_proc = subprocess.run(
         build_generate_command(args, job, source_path, output_dir, device),
         cwd=args.cwd,
@@ -1275,6 +1365,8 @@ def gpu_worker(
         job = EvalJob(model=base_job.model, seed=base_job.seed, gpu=gpu)
         env = os.environ.copy()
         env["CUDA_VISIBLE_DEVICES"] = str(gpu)
+        if hasattr(args, "download_source") and args.download_source is not None:
+            env["DIFFSYNTH_DOWNLOAD_SOURCE"] = args.download_source
         try:
             row = run_eval_job(
                 args=args,
@@ -1437,6 +1529,11 @@ def add_generation_args(parser: argparse.ArgumentParser, seed_required: bool = T
     parser.add_argument("--dtype", choices=["bfloat16", "float16"], default="bfloat16")
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--denoising-strength", type=float, default=0.85)
+    parser.add_argument(
+        "--download-source",
+        choices=["modelscope", "huggingface"],
+        default=os.environ.get("DIFFSYNTH_DOWNLOAD_SOURCE", "modelscope"),
+    )
 
 
 def main() -> None:
