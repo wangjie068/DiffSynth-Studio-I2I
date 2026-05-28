@@ -184,6 +184,36 @@ def repo_id_for_source(
     return SOURCE_REPO_ID_OVERRIDES.get((source.lower(), model_id), model_id)
 
 
+def model_config_for_pattern(
+    ModelConfig,
+    model_id: str,
+    pattern: str,
+    download_source: str | None = None,
+    model_base_path: str | Path | None = None,
+    **kwargs,
+):
+    resolved_model_id = repo_id_for_source(
+        model_id,
+        download_source=download_source,
+        model_base_path=model_base_path,
+        pattern=pattern,
+        prefer_local=True,
+    )
+    has_local_files = local_pattern_exists(
+        resolved_model_id,
+        pattern,
+        model_base_path=model_base_path,
+    )
+    return ModelConfig(
+        model_id=resolved_model_id,
+        origin_file_pattern=pattern,
+        download_source=download_source,
+        local_model_path=str(model_base_path) if model_base_path is not None else None,
+        skip_download=has_local_files,
+        **kwargs,
+    )
+
+
 def qwen_runner(
     *,
     model_id: str,
@@ -311,30 +341,31 @@ def run_firered_11(**kwargs):
 def run_joyai_image_edit(**kwargs):
     from diffsynth.pipelines.joyai_image import JoyAIImagePipeline, ModelConfig
 
-    model_id = repo_id_for_source(
-        "jd-opensource/JoyAI-Image-Edit",
-        pattern="transformer/transformer.pth",
-    )
+    model_id = "jd-opensource/JoyAI-Image-Edit"
     pipe = JoyAIImagePipeline.from_pretrained(
         torch_dtype=get_torch_dtype(kwargs["dtype"]),
         device=kwargs["device"],
         model_configs=[
-            ModelConfig(
+            model_config_for_pattern(
+                ModelConfig,
                 model_id=model_id,
-                origin_file_pattern="transformer/transformer.pth",
+                pattern="transformer/transformer.pth",
             ),
-            ModelConfig(
+            model_config_for_pattern(
+                ModelConfig,
                 model_id=model_id,
-                origin_file_pattern="JoyAI-Image-Und/model*.safetensors",
+                pattern="JoyAI-Image-Und/model*.safetensors",
             ),
-            ModelConfig(
+            model_config_for_pattern(
+                ModelConfig,
                 model_id=model_id,
-                origin_file_pattern="vae/Wan2.1_VAE.pth",
+                pattern="vae/Wan2.1_VAE.pth",
             ),
         ],
-        processor_config=ModelConfig(
+        processor_config=model_config_for_pattern(
+            ModelConfig,
             model_id=model_id,
-            origin_file_pattern="JoyAI-Image-Und/",
+            pattern="JoyAI-Image-Und/",
         ),
     )
     return pipe(
@@ -1007,6 +1038,7 @@ def command_download_models(args: argparse.Namespace) -> None:
                     origin_file_pattern=pattern,
                     download_source=args.download_source if source == "local" else source,
                     local_model_path=args.model_base_path,
+                    skip_download=local_pattern_exists(source_model_id, pattern, args.model_base_path),
                 )
                 config.download_if_necessary()
                 last_error = None
