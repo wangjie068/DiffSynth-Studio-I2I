@@ -50,6 +50,16 @@ DOWNLOAD_SOURCE=huggingface MODEL_BASE_PATH=./models \
   bash examples/edit_pair_validation/download_all_i2i_models.sh
 ```
 
+脚本会自动处理少数模型在不同平台上的 repo id 差异，例如 JoyAI 在 ModelScope 是 `jd-opensource/JoyAI-Image-Edit`，在 Hugging Face 是 `jdopensource/JoyAI-Image-Edit`。
+
+如果希望 Hugging Face 失败时回退到 ModelScope，并且某个模型失败后继续下载其他模型：
+
+```bash
+DOWNLOAD_SOURCE=huggingface MODEL_BASE_PATH=./models \
+  bash examples/edit_pair_validation/download_all_i2i_models.sh \
+  --fallback-source modelscope --continue-on-error
+```
+
 只下载部分模型：
 
 ```bash

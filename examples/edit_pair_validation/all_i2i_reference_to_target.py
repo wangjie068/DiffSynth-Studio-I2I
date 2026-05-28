@@ -113,6 +113,16 @@ def get_torch_dtype(dtype_name: str):
     return getattr(torch, dtype_name)
 
 
+SOURCE_REPO_ID_OVERRIDES = {
+    ("huggingface", "jd-opensource/JoyAI-Image-Edit"): "jdopensource/JoyAI-Image-Edit",
+}
+
+
+def repo_id_for_source(model_id: str, download_source: str | None = None) -> str:
+    source = download_source or os.environ.get("DIFFSYNTH_DOWNLOAD_SOURCE", "modelscope")
+    return SOURCE_REPO_ID_OVERRIDES.get((source.lower(), model_id), model_id)
+
+
 def qwen_runner(
     *,
     model_id: str,
@@ -240,25 +250,26 @@ def run_firered_11(**kwargs):
 def run_joyai_image_edit(**kwargs):
     from diffsynth.pipelines.joyai_image import JoyAIImagePipeline, ModelConfig
 
+    model_id = repo_id_for_source("jd-opensource/JoyAI-Image-Edit")
     pipe = JoyAIImagePipeline.from_pretrained(
         torch_dtype=get_torch_dtype(kwargs["dtype"]),
         device=kwargs["device"],
         model_configs=[
             ModelConfig(
-                model_id="jd-opensource/JoyAI-Image-Edit",
+                model_id=model_id,
                 origin_file_pattern="transformer/transformer.pth",
             ),
             ModelConfig(
-                model_id="jd-opensource/JoyAI-Image-Edit",
+                model_id=model_id,
                 origin_file_pattern="JoyAI-Image-Und/model*.safetensors",
             ),
             ModelConfig(
-                model_id="jd-opensource/JoyAI-Image-Edit",
+                model_id=model_id,
                 origin_file_pattern="vae/Wan2.1_VAE.pth",
             ),
         ],
         processor_config=ModelConfig(
-            model_id="jd-opensource/JoyAI-Image-Edit",
+            model_id=model_id,
             origin_file_pattern="JoyAI-Image-Und/",
         ),
     )
@@ -887,16 +898,37 @@ def command_download_models(args: argparse.Namespace) -> None:
     if not args.dry_run:
         from diffsynth.core.loader.config import ModelConfig
     for index, (model_id, pattern) in enumerate(entries, start=1):
-        print(f"[{index}/{len(entries)}] {model_id} :: {pattern}", flush=True)
+        primary_model_id = repo_id_for_source(model_id, args.download_source)
+        print(f"[{index}/{len(entries)}] {primary_model_id} :: {pattern}", flush=True)
         if args.dry_run:
             continue
-        config = ModelConfig(
-            model_id=model_id,
-            origin_file_pattern=pattern,
-            download_source=args.download_source,
-            local_model_path=args.model_base_path,
-        )
-        config.download_if_necessary()
+        sources = [args.download_source]
+        if args.fallback_source != "none" and args.fallback_source not in sources:
+            sources.append(args.fallback_source)
+        last_error = None
+        for source in sources:
+            source_model_id = repo_id_for_source(model_id, source)
+            try:
+                config = ModelConfig(
+                    model_id=source_model_id,
+                    origin_file_pattern=pattern,
+                    download_source=source,
+                    local_model_path=args.model_base_path,
+                )
+                config.download_if_necessary()
+                last_error = None
+                break
+            except Exception as error:
+                last_error = error
+                print(
+                    f"  failed from {source} as {source_model_id}: {type(error).__name__}: {error}",
+                    flush=True,
+                )
+        if last_error is not None:
+            if args.continue_on_error:
+                print(f"  continue after failed download: {primary_model_id} :: {pattern}", flush=True)
+                continue
+            raise last_error
     if args.dry_run:
         print("Dry run complete. No files were downloaded.")
     else:
@@ -1187,6 +1219,12 @@ def build_parser() -> argparse.ArgumentParser:
         choices=["modelscope", "huggingface"],
         default=os.environ.get("DIFFSYNTH_DOWNLOAD_SOURCE", "modelscope"),
     )
+    download_parser.add_argument(
+        "--fallback-source",
+        choices=["modelscope", "huggingface", "none"],
+        default="modelscope",
+    )
+    download_parser.add_argument("--continue-on-error", action="store_true")
     download_parser.add_argument(
         "--model-base-path",
         default=os.environ.get("DIFFSYNTH_MODEL_BASE_PATH", "./models"),
