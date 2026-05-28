@@ -5,8 +5,10 @@ import inspect
 import json
 import math
 import os
+import queue
 import subprocess
 import sys
+import threading
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
@@ -60,6 +62,13 @@ class ModelSpec:
     runner: Callable
     relevant: bool = True
     notes: str = ""
+
+
+@dataclass(frozen=True)
+class EvalJob:
+    model: str
+    seed: int
+    gpu: str | None = None
 
 
 def download_image(url: str, output_path: Path) -> None:
@@ -1092,96 +1101,237 @@ def compare_one(args: argparse.Namespace) -> None:
         )
 
 
-def command_run_all(args: argparse.Namespace) -> None:
-    model_names = resolve_model_names(args.models)
+def build_eval_jobs(args: argparse.Namespace) -> list[EvalJob]:
+    return [
+        EvalJob(model=model, seed=seed)
+        for model in resolve_model_names(args.models)
+        for seed in args.seeds
+    ]
+
+
+def build_generate_command(
+    args: argparse.Namespace,
+    job: EvalJob,
+    source_path: Path,
+    output_dir: Path,
+    device: str,
+) -> list[str]:
+    command = [
+        sys.executable,
+        __file__,
+        "generate",
+        "--model",
+        job.model,
+        "--source",
+        str(source_path),
+        "--output-dir",
+        str(output_dir),
+        "--seed",
+        str(job.seed),
+        "--height",
+        str(args.height),
+        "--width",
+        str(args.width),
+        "--dtype",
+        args.dtype,
+        "--device",
+        device,
+        "--denoising-strength",
+        str(args.denoising_strength),
+        "--prompt",
+        args.prompt,
+        "--negative-prompt",
+        args.negative_prompt,
+    ]
+    if args.num_inference_steps is not None:
+        command.extend(["--num-inference-steps", str(args.num_inference_steps)])
+    if args.cfg_scale is not None:
+        command.extend(["--cfg-scale", str(args.cfg_scale)])
+    return command
+
+
+def build_compare_command(
+    job: EvalJob,
+    source_path: Path,
+    target_path: Path,
+    generated: Path,
+    eval_dir: Path,
+) -> list[str]:
+    return [
+        sys.executable,
+        __file__,
+        "compare",
+        "--source",
+        str(source_path),
+        "--target",
+        str(target_path),
+        "--generated",
+        str(generated),
+        "--output-dir",
+        str(eval_dir),
+    ]
+
+
+def run_eval_job(
+    args: argparse.Namespace,
+    job: EvalJob,
+    source_path: Path,
+    target_path: Path,
+    output_dir: Path,
+    device: str,
+    env: dict[str, str] | None = None,
+) -> dict:
+    gpu_label = f" gpu={job.gpu}" if job.gpu is not None else ""
+    print(f"\n=== generate {job.model} seed={job.seed}{gpu_label} ===", flush=True)
+    generated = output_dir / job.model / f"seed{job.seed}.png"
+    eval_dir = output_dir / job.model / f"eval_seed{job.seed}"
+    row = {"model": job.model, "seed": job.seed}
+    if job.gpu is not None:
+        row["gpu"] = job.gpu
+    gen_proc = subprocess.run(
+        build_generate_command(args, job, source_path, output_dir, device),
+        cwd=args.cwd,
+        env=env,
+    )
+    if gen_proc.returncode != 0:
+        row.update({"status": "generate_failed", "returncode": gen_proc.returncode})
+        return row
+
+    print(f"=== compare {job.model} seed={job.seed}{gpu_label} ===", flush=True)
+    cmp_proc = subprocess.run(
+        build_compare_command(job, source_path, target_path, generated, eval_dir),
+        cwd=args.cwd,
+        env=env,
+    )
+    if cmp_proc.returncode != 0:
+        row.update({"status": "compare_failed", "returncode": cmp_proc.returncode})
+        return row
+    metrics = json.loads((eval_dir / "metrics.json").read_text(encoding="utf-8"))["metrics"]
+    row.update(
+        {
+            "status": "ok",
+            "generated": str(generated),
+            "eval_dir": str(eval_dir),
+            "full_psnr_db": metrics["full"]["psnr_db"],
+            "product_right_psnr_db": metrics["product_right"]["psnr_db"],
+            "tube_label_right_psnr_db": metrics["tube_label_right"]["psnr_db"],
+            "new_ad_copy_left_psnr_db": metrics["new_ad_copy_left"]["psnr_db"],
+        }
+    )
+    return row
+
+
+def prepare_run_paths(args: argparse.Namespace) -> tuple[Path, Path, Path]:
     source_path = require_file(args.source, "source image", auto_download=True)
     target_path = require_file(args.target, "target image", auto_download=True)
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
+    return source_path, target_path, output_dir
+
+
+def finalize_rows(output_dir: Path, rows: list[dict]) -> None:
     results_path = output_dir / "results.jsonl"
     summary_csv_path = output_dir / "summary.csv"
-    rows = []
-    for model in model_names:
-        for seed in args.seeds:
-            print(f"\n=== generate {model} seed={seed} ===", flush=True)
-            generated = output_dir / model / f"seed{seed}.png"
-            eval_dir = output_dir / model / f"eval_seed{seed}"
-            gen_cmd = [
-                sys.executable,
-                __file__,
-                "generate",
-                "--model",
-                model,
-                "--source",
-                str(source_path),
-                "--output-dir",
-                str(output_dir),
-                "--seed",
-                str(seed),
-                "--height",
-                str(args.height),
-                "--width",
-                str(args.width),
-                "--dtype",
-                args.dtype,
-                "--device",
-                args.device,
-                "--denoising-strength",
-                str(args.denoising_strength),
-                "--prompt",
-                args.prompt,
-                "--negative-prompt",
-                args.negative_prompt,
-            ]
-            if args.num_inference_steps is not None:
-                gen_cmd.extend(["--num-inference-steps", str(args.num_inference_steps)])
-            if args.cfg_scale is not None:
-                gen_cmd.extend(["--cfg-scale", str(args.cfg_scale)])
-            gen_proc = subprocess.run(gen_cmd, cwd=args.cwd)
-            row = {"model": model, "seed": seed}
-            if gen_proc.returncode != 0:
-                row.update({"status": "generate_failed", "returncode": gen_proc.returncode})
-                append_jsonl(results_path, row)
-                rows.append(row)
-                continue
-
-            print(f"=== compare {model} seed={seed} ===", flush=True)
-            cmp_cmd = [
-                sys.executable,
-                __file__,
-                "compare",
-                "--source",
-                str(source_path),
-                "--target",
-                str(target_path),
-                "--generated",
-                str(generated),
-                "--output-dir",
-                str(eval_dir),
-            ]
-            cmp_proc = subprocess.run(cmp_cmd, cwd=args.cwd)
-            if cmp_proc.returncode != 0:
-                row.update({"status": "compare_failed", "returncode": cmp_proc.returncode})
-                append_jsonl(results_path, row)
-                rows.append(row)
-                continue
-            metrics = json.loads((eval_dir / "metrics.json").read_text(encoding="utf-8"))["metrics"]
-            row.update(
-                {
-                    "status": "ok",
-                    "generated": str(generated),
-                    "eval_dir": str(eval_dir),
-                    "full_psnr_db": metrics["full"]["psnr_db"],
-                    "product_right_psnr_db": metrics["product_right"]["psnr_db"],
-                    "tube_label_right_psnr_db": metrics["tube_label_right"]["psnr_db"],
-                    "new_ad_copy_left_psnr_db": metrics["new_ad_copy_left"]["psnr_db"],
-                }
-            )
-            append_jsonl(results_path, row)
-            rows.append(row)
+    for row in rows:
+        append_jsonl(results_path, row)
     write_summary_csv(summary_csv_path, rows)
     print(f"\nSaved JSONL results to {results_path}")
     print(f"Saved CSV summary to {summary_csv_path}")
+
+
+def command_run_all(args: argparse.Namespace) -> None:
+    source_path, target_path, output_dir = prepare_run_paths(args)
+    rows = []
+    for job in build_eval_jobs(args):
+        rows.append(
+            run_eval_job(
+                args=args,
+                job=job,
+                source_path=source_path,
+                target_path=target_path,
+                output_dir=output_dir,
+                device=args.device,
+            )
+        )
+    finalize_rows(output_dir, rows)
+
+
+def gpu_worker(
+    *,
+    gpu: str,
+    jobs: queue.Queue,
+    rows: list[dict],
+    rows_lock: threading.Lock,
+    args: argparse.Namespace,
+    source_path: Path,
+    target_path: Path,
+    output_dir: Path,
+) -> None:
+    while True:
+        try:
+            base_job = jobs.get_nowait()
+        except queue.Empty:
+            return
+        job = EvalJob(model=base_job.model, seed=base_job.seed, gpu=gpu)
+        env = os.environ.copy()
+        env["CUDA_VISIBLE_DEVICES"] = str(gpu)
+        try:
+            row = run_eval_job(
+                args=args,
+                job=job,
+                source_path=source_path,
+                target_path=target_path,
+                output_dir=output_dir,
+                device=args.worker_device,
+                env=env,
+            )
+        except Exception as error:
+            row = {
+                "model": job.model,
+                "seed": job.seed,
+                "gpu": job.gpu,
+                "status": "worker_exception",
+                "error_type": type(error).__name__,
+                "error": str(error),
+            }
+        with rows_lock:
+            rows.append(row)
+        jobs.task_done()
+
+
+def command_run_parallel(args: argparse.Namespace) -> None:
+    source_path, target_path, output_dir = prepare_run_paths(args)
+    all_jobs = build_eval_jobs(args)
+    job_queue: queue.Queue = queue.Queue()
+    for job in all_jobs:
+        job_queue.put(job)
+    rows: list[dict] = []
+    rows_lock = threading.Lock()
+    gpus = [str(gpu) for gpu in args.gpus]
+    print(f"Running {len(all_jobs)} jobs across GPUs: {', '.join(gpus)}", flush=True)
+    threads = [
+        threading.Thread(
+            target=gpu_worker,
+            kwargs={
+                "gpu": gpu,
+                "jobs": job_queue,
+                "rows": rows,
+                "rows_lock": rows_lock,
+                "args": args,
+                "source_path": source_path,
+                "target_path": target_path,
+                "output_dir": output_dir,
+            },
+            daemon=True,
+        )
+        for gpu in gpus
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    rows.sort(key=lambda row: (row.get("model", ""), int(row.get("seed", -1)), str(row.get("gpu", ""))))
+    finalize_rows(output_dir, rows)
 
 
 def append_jsonl(path: Path, row: dict) -> None:
@@ -1261,6 +1411,18 @@ def build_parser() -> argparse.ArgumentParser:
     run_all.add_argument("--cwd", default=os.getcwd())
     add_generation_args(run_all, seed_required=False)
     run_all.set_defaults(func=command_run_all)
+
+    run_parallel = subparsers.add_parser("run-parallel")
+    run_parallel.add_argument("--models", nargs="+", default=["all_relevant"])
+    run_parallel.add_argument("--source", required=True)
+    run_parallel.add_argument("--target", required=True)
+    run_parallel.add_argument("--output-dir", default="outputs/edit_pair_validation/all_i2i_parallel")
+    run_parallel.add_argument("--seeds", nargs="+", type=int, default=[0])
+    run_parallel.add_argument("--gpus", nargs="+", required=True)
+    run_parallel.add_argument("--worker-device", default="cuda")
+    run_parallel.add_argument("--cwd", default=os.getcwd())
+    add_generation_args(run_parallel, seed_required=False)
+    run_parallel.set_defaults(func=command_run_parallel)
     return parser
 
 

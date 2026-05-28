@@ -164,6 +164,23 @@ python examples/edit_pair_validation/all_i2i_reference_to_target.py run-all \
   --device cuda --dtype bfloat16
 ```
 
+多卡加速用 `run-parallel`。它不会把单个模型拆到多卡，而是把不同 model/seed job 分配给不同 GPU；每个子进程只看到一张卡：
+
+```bash
+python examples/edit_pair_validation/all_i2i_reference_to_target.py run-parallel \
+  --source data/edit_pair_validation/amazon_lipcare/source.jpg \
+  --target data/edit_pair_validation/amazon_lipcare/target.jpg \
+  --output-dir outputs/edit_pair_validation/all_i2i_parallel \
+  --models all_relevant \
+  --seeds 0 1 2 3 \
+  --gpus 0 1 2 3 \
+  --worker-device cuda \
+  --height 1024 --width 1024 \
+  --dtype bfloat16
+```
+
+如果某张卡显存小，可以只给它分轻模型，或者先用 `--models` 跑一个小集合。`run-parallel` 的结果同样汇总到 `results.jsonl` 和 `summary.csv`。
+
 如果你想先跑小集合：
 
 ```bash
