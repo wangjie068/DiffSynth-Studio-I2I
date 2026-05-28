@@ -16,6 +16,10 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
 
+REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
 SOURCE_URL = "https://m.media-amazon.com/images/I/31u0ldoiaKL.jpg"
 TARGET_URL = "https://m.media-amazon.com/images/I/41Na40-8JfL.jpg"
 
@@ -694,6 +698,135 @@ RUNNER_COMMON_KEYS = {
 }
 
 
+def add_download_entry(entries: list[tuple[str, str]], model_id: str, pattern: str) -> None:
+    key = (model_id, pattern)
+    if key not in entries:
+        entries.append(key)
+
+
+def qwen_common_download_entries(entries: list[tuple[str, str]]) -> None:
+    add_download_entry(entries, "Qwen/Qwen-Image", "text_encoder/model*.safetensors")
+    add_download_entry(entries, "Qwen/Qwen-Image", "vae/diffusion_pytorch_model.safetensors")
+    add_download_entry(entries, "Qwen/Qwen-Image", "tokenizer/")
+    add_download_entry(entries, "Qwen/Qwen-Image-Edit", "processor/")
+
+
+def flux1_common_download_entries(entries: list[tuple[str, str]]) -> None:
+    add_download_entry(entries, "black-forest-labs/FLUX.1-dev", "tokenizer/")
+    add_download_entry(entries, "black-forest-labs/FLUX.1-dev", "tokenizer_2/")
+
+
+def download_entries_for_model(model_name: str) -> list[tuple[str, str]]:
+    entries: list[tuple[str, str]] = []
+    if model_name == "qwen_image_edit":
+        qwen_common_download_entries(entries)
+        add_download_entry(entries, "Qwen/Qwen-Image-Edit", "transformer/diffusion_pytorch_model*.safetensors")
+    elif model_name == "qwen_image_edit_2509":
+        qwen_common_download_entries(entries)
+        add_download_entry(entries, "Qwen/Qwen-Image-Edit-2509", "transformer/diffusion_pytorch_model*.safetensors")
+    elif model_name == "qwen_image_edit_2511":
+        qwen_common_download_entries(entries)
+        add_download_entry(entries, "Qwen/Qwen-Image-Edit-2511", "transformer/diffusion_pytorch_model*.safetensors")
+    elif model_name == "qwen_image_edit_2511_lightning":
+        qwen_common_download_entries(entries)
+        add_download_entry(entries, "Qwen/Qwen-Image-Edit-2511", "transformer/diffusion_pytorch_model*.safetensors")
+        add_download_entry(entries, "lightx2v/Qwen-Image-Edit-2511-Lightning", "Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors")
+    elif model_name == "firered_image_edit_1_0":
+        qwen_common_download_entries(entries)
+        add_download_entry(entries, "FireRedTeam/FireRed-Image-Edit-1.0", "transformer/diffusion_pytorch_model*.safetensors")
+    elif model_name == "firered_image_edit_1_1":
+        qwen_common_download_entries(entries)
+        add_download_entry(entries, "FireRedTeam/FireRed-Image-Edit-1.1", "transformer/diffusion_pytorch_model*.safetensors")
+    elif model_name == "joyai_image_edit":
+        add_download_entry(entries, "jd-opensource/JoyAI-Image-Edit", "transformer/transformer.pth")
+        add_download_entry(entries, "jd-opensource/JoyAI-Image-Edit", "JoyAI-Image-Und/model*.safetensors")
+        add_download_entry(entries, "jd-opensource/JoyAI-Image-Edit", "vae/Wan2.1_VAE.pth")
+        add_download_entry(entries, "jd-opensource/JoyAI-Image-Edit", "JoyAI-Image-Und/")
+    elif model_name == "hidream_o1_image":
+        add_download_entry(entries, "HiDream-ai/HiDream-O1-Image", "model-*.safetensors")
+        add_download_entry(entries, "HiDream-ai/HiDream-O1-Image", "./")
+    elif model_name == "hidream_o1_image_dev":
+        add_download_entry(entries, "HiDream-ai/HiDream-O1-Image-Dev", "model-*.safetensors")
+        add_download_entry(entries, "HiDream-ai/HiDream-O1-Image-Dev", "./")
+    elif model_name == "z_image_omni_base":
+        add_download_entry(entries, "Tongyi-MAI/Z-Image-Omni-Base", "transformer/*.safetensors")
+        add_download_entry(entries, "Tongyi-MAI/Z-Image-Omni-Base", "siglip/model.safetensors")
+        add_download_entry(entries, "Tongyi-MAI/Z-Image-Turbo", "text_encoder/*.safetensors")
+        add_download_entry(entries, "Tongyi-MAI/Z-Image-Turbo", "vae/diffusion_pytorch_model.safetensors")
+        add_download_entry(entries, "Tongyi-MAI/Z-Image-Turbo", "tokenizer/")
+    elif model_name == "flux1_kontext_dev":
+        flux1_common_download_entries(entries)
+        add_download_entry(entries, "black-forest-labs/FLUX.1-Kontext-dev", "flux1-kontext-dev.safetensors")
+        add_download_entry(entries, "black-forest-labs/FLUX.1-dev", "text_encoder/model.safetensors")
+        add_download_entry(entries, "black-forest-labs/FLUX.1-dev", "text_encoder_2/*.safetensors")
+        add_download_entry(entries, "black-forest-labs/FLUX.1-dev", "ae.safetensors")
+    elif model_name == "step1x_edit":
+        flux1_common_download_entries(entries)
+        add_download_entry(entries, "Qwen/Qwen2.5-VL-7B-Instruct", "model-*.safetensors")
+        add_download_entry(entries, "Qwen/Qwen2.5-VL-7B-Instruct", "")
+        add_download_entry(entries, "stepfun-ai/Step1X-Edit", "step1x-edit-i1258.safetensors")
+        add_download_entry(entries, "stepfun-ai/Step1X-Edit", "vae.safetensors")
+    elif model_name == "nexus_gen_editing":
+        flux1_common_download_entries(entries)
+        add_download_entry(entries, "DiffSynth-Studio/Nexus-GenV2", "model*.safetensors")
+        add_download_entry(entries, "DiffSynth-Studio/Nexus-GenV2", "edit_decoder.bin")
+        add_download_entry(entries, "DiffSynth-Studio/Nexus-GenV2", "processor/")
+        add_download_entry(entries, "black-forest-labs/FLUX.1-dev", "text_encoder/model.safetensors")
+        add_download_entry(entries, "black-forest-labs/FLUX.1-dev", "text_encoder_2/*.safetensors")
+        add_download_entry(entries, "black-forest-labs/FLUX.1-dev", "ae.safetensors")
+    elif model_name == "flux2_dev":
+        add_download_entry(entries, "black-forest-labs/FLUX.2-dev", "text_encoder/*.safetensors")
+        add_download_entry(entries, "black-forest-labs/FLUX.2-dev", "transformer/*.safetensors")
+        add_download_entry(entries, "black-forest-labs/FLUX.2-dev", "vae/diffusion_pytorch_model.safetensors")
+        add_download_entry(entries, "black-forest-labs/FLUX.2-dev", "tokenizer/")
+    elif model_name == "flux2_klein_base_4b":
+        add_download_entry(entries, "black-forest-labs/FLUX.2-klein-4B", "text_encoder/*.safetensors")
+        add_download_entry(entries, "black-forest-labs/FLUX.2-klein-base-4B", "transformer/*.safetensors")
+        add_download_entry(entries, "black-forest-labs/FLUX.2-klein-4B", "vae/diffusion_pytorch_model.safetensors")
+        add_download_entry(entries, "black-forest-labs/FLUX.2-klein-4B", "tokenizer/")
+    elif model_name == "flux2_klein_4b":
+        add_download_entry(entries, "black-forest-labs/FLUX.2-klein-4B", "text_encoder/*.safetensors")
+        add_download_entry(entries, "black-forest-labs/FLUX.2-klein-4B", "transformer/*.safetensors")
+        add_download_entry(entries, "black-forest-labs/FLUX.2-klein-4B", "vae/diffusion_pytorch_model.safetensors")
+        add_download_entry(entries, "black-forest-labs/FLUX.2-klein-4B", "tokenizer/")
+    elif model_name == "flux2_klein_base_9b":
+        add_download_entry(entries, "black-forest-labs/FLUX.2-klein-9B", "text_encoder/*.safetensors")
+        add_download_entry(entries, "black-forest-labs/FLUX.2-klein-base-9B", "transformer/*.safetensors")
+        add_download_entry(entries, "black-forest-labs/FLUX.2-klein-9B", "vae/diffusion_pytorch_model.safetensors")
+        add_download_entry(entries, "black-forest-labs/FLUX.2-klein-9B", "tokenizer/")
+    elif model_name == "flux2_klein_9b":
+        add_download_entry(entries, "black-forest-labs/FLUX.2-klein-9B", "text_encoder/*.safetensors")
+        add_download_entry(entries, "black-forest-labs/FLUX.2-klein-9B", "transformer/*.safetensors")
+        add_download_entry(entries, "black-forest-labs/FLUX.2-klein-9B", "vae/diffusion_pytorch_model.safetensors")
+        add_download_entry(entries, "black-forest-labs/FLUX.2-klein-9B", "tokenizer/")
+    elif model_name == "flux2_template_edit_4b":
+        add_download_entry(entries, "black-forest-labs/FLUX.2-klein-base-4B", "transformer/*.safetensors")
+        add_download_entry(entries, "black-forest-labs/FLUX.2-klein-4B", "text_encoder/*.safetensors")
+        add_download_entry(entries, "black-forest-labs/FLUX.2-klein-4B", "vae/diffusion_pytorch_model.safetensors")
+        add_download_entry(entries, "black-forest-labs/FLUX.2-klein-4B", "tokenizer/")
+        add_download_entry(entries, "DiffSynth-Studio/Template-KleinBase4B-Edit", "*")
+    elif model_name == "anima_img2img":
+        add_download_entry(entries, "circlestone-labs/Anima", "split_files/diffusion_models/anima-preview.safetensors")
+        add_download_entry(entries, "circlestone-labs/Anima", "split_files/text_encoders/qwen_3_06b_base.safetensors")
+        add_download_entry(entries, "circlestone-labs/Anima", "split_files/vae/qwen_image_vae.safetensors")
+        add_download_entry(entries, "Qwen/Qwen3-0.6B", "./")
+        add_download_entry(entries, "stabilityai/stable-diffusion-3.5-large", "tokenizer_3/")
+    else:
+        raise SystemExit(f"No download config for model: {model_name}")
+    return entries
+
+
+def download_entries_for_models(model_names: list[str]) -> list[tuple[str, str]]:
+    entries: list[tuple[str, str]] = []
+    seen = set()
+    for model_name in model_names:
+        for entry in download_entries_for_model(model_name):
+            if entry not in seen:
+                seen.add(entry)
+                entries.append(entry)
+    return entries
+
+
 def list_models(args: argparse.Namespace) -> None:
     rows = []
     for spec in MODEL_SPECS:
@@ -742,7 +875,32 @@ def self_test(args: argparse.Namespace) -> None:
             for parameter in inspect.signature(spec.runner).parameters.values()
         ):
             raise SystemExit(f"{spec.name} runner must accept **kwargs")
+        download_entries_for_model(spec.name)
     print(f"self-test ok: {len(MODEL_SPECS)} model adapters accept common kwargs")
+
+
+def command_download_models(args: argparse.Namespace) -> None:
+    model_names = resolve_model_names(args.models)
+    entries = download_entries_for_models(model_names)
+    print(f"Downloading {len(entries)} unique model file groups for {len(model_names)} models.")
+    print(f"download_source={args.download_source}, model_base_path={args.model_base_path}")
+    if not args.dry_run:
+        from diffsynth.core.loader.config import ModelConfig
+    for index, (model_id, pattern) in enumerate(entries, start=1):
+        print(f"[{index}/{len(entries)}] {model_id} :: {pattern}", flush=True)
+        if args.dry_run:
+            continue
+        config = ModelConfig(
+            model_id=model_id,
+            origin_file_pattern=pattern,
+            download_source=args.download_source,
+            local_model_path=args.model_base_path,
+        )
+        config.download_if_necessary()
+    if args.dry_run:
+        print("Dry run complete. No files were downloaded.")
+    else:
+        print("All requested model files are downloaded.")
 
 
 def resolve_model_names(names: list[str]) -> list[str]:
@@ -1021,6 +1179,20 @@ def build_parser() -> argparse.ArgumentParser:
 
     self_test_parser = subparsers.add_parser("self-test")
     self_test_parser.set_defaults(func=self_test)
+
+    download_parser = subparsers.add_parser("download-models")
+    download_parser.add_argument("--models", nargs="+", default=["all_relevant"])
+    download_parser.add_argument(
+        "--download-source",
+        choices=["modelscope", "huggingface"],
+        default=os.environ.get("DIFFSYNTH_DOWNLOAD_SOURCE", "modelscope"),
+    )
+    download_parser.add_argument(
+        "--model-base-path",
+        default=os.environ.get("DIFFSYNTH_MODEL_BASE_PATH", "./models"),
+    )
+    download_parser.add_argument("--dry-run", action="store_true")
+    download_parser.set_defaults(func=command_download_models)
 
     prepare = subparsers.add_parser("prepare")
     prepare.add_argument("--source-url", default=SOURCE_URL)

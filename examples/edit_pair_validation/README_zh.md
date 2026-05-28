@@ -35,6 +35,34 @@ data/edit_pair_validation/amazon_lipcare/target.jpg
 python examples/edit_pair_validation/all_i2i_reference_to_target.py list-models
 ```
 
+## 2.5. 先下载所有模型
+
+正式跑推理前可以先把本实验涉及的模型、processor、tokenizer、LoRA 和 template 都下载到本地：
+
+```bash
+bash examples/edit_pair_validation/download_all_i2i_models.sh
+```
+
+默认下载源是 `modelscope`，模型目录是 `./models`。如果你的环境走 Hugging Face：
+
+```bash
+DOWNLOAD_SOURCE=huggingface MODEL_BASE_PATH=./models \
+  bash examples/edit_pair_validation/download_all_i2i_models.sh
+```
+
+只下载部分模型：
+
+```bash
+bash examples/edit_pair_validation/download_all_i2i_models.sh \
+  --models qwen_image_edit_2511 flux1_kontext_dev flux2_klein_base_4b
+```
+
+先查看将要下载的文件组，不实际下载：
+
+```bash
+SKIP_IMAGES=1 bash examples/edit_pair_validation/download_all_i2i_models.sh --dry-run
+```
+
 当前脚本纳入了仓库中明确能吃参考图并输出单张图的模型：
 
 ```text
