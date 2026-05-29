@@ -136,6 +136,20 @@ def get_model_base_path() -> Path:
 
 
 NEXUS_GEN_MODEL_ID = "modelscope/Nexus-GenV2"
+NEXUS_GEN_PROCESSOR_PATTERNS = [
+    "added_tokens.json",
+    "chat_template.json",
+    "config.json",
+    "configuration.json",
+    "configuration_qwen2_5_vl.py",
+    "generation_config.json",
+    "merges.txt",
+    "preprocessor_config.json",
+    "special_tokens_map.json",
+    "tokenizer.json",
+    "tokenizer_config.json",
+    "vocab.json",
+]
 
 
 def local_repo_exists(model_id: str, model_base_path: str | Path | None = None) -> bool:
@@ -626,7 +640,7 @@ def run_nexus_gen_editing(**kwargs):
         nexus_gen_processor_config=model_config_for_pattern(
             ModelConfig,
             model_id=NEXUS_GEN_MODEL_ID,
-            pattern="processor/",
+            pattern="./",
         ),
     )
     return pipe(
@@ -959,7 +973,8 @@ def download_entries_for_model(model_name: str) -> list[tuple[str, str]]:
         flux1_common_download_entries(entries)
         add_download_entry(entries, NEXUS_GEN_MODEL_ID, "model*.safetensors")
         add_download_entry(entries, NEXUS_GEN_MODEL_ID, "edit_decoder.bin")
-        add_download_entry(entries, NEXUS_GEN_MODEL_ID, "processor/")
+        for pattern in NEXUS_GEN_PROCESSOR_PATTERNS:
+            add_download_entry(entries, NEXUS_GEN_MODEL_ID, pattern)
     elif model_name == "flux2_dev":
         add_download_entry(entries, "black-forest-labs/FLUX.2-dev", "text_encoder/*.safetensors")
         add_download_entry(entries, "black-forest-labs/FLUX.2-dev", "transformer/*.safetensors")
@@ -1072,6 +1087,7 @@ def command_download_models(args: argparse.Namespace) -> None:
     print(f"download_source={args.download_source}, model_base_path={args.model_base_path}")
     if not args.dry_run:
         from diffsynth.core.loader.config import ModelConfig
+    failed_entries = []
     for index, (model_id, pattern) in enumerate(entries, start=1):
         local_model_id = repo_id_for_source(
             model_id,
@@ -1120,8 +1136,13 @@ def command_download_models(args: argparse.Namespace) -> None:
                     skip_download=local_pattern_exists(source_model_id, pattern, args.model_base_path),
                 )
                 config.download_if_necessary()
-                last_error = None
-                break
+                if local_pattern_exists(source_model_id, pattern, args.model_base_path):
+                    last_error = None
+                    break
+                last_error = RuntimeError(
+                    f"download returned but no local files matched {source_model_id} :: {pattern}"
+                )
+                print(f"  failed from {source} as {source_model_id}: {last_error}", flush=True)
             except Exception as error:
                 last_error = error
                 print(
@@ -1131,10 +1152,16 @@ def command_download_models(args: argparse.Namespace) -> None:
         if last_error is not None:
             if args.continue_on_error:
                 print(f"  continue after failed download: {primary_model_id} :: {pattern}", flush=True)
+                failed_entries.append((primary_model_id, pattern, last_error))
                 continue
             raise last_error
     if args.dry_run:
         print("Dry run complete. No files were downloaded.")
+    elif failed_entries:
+        print(f"\nFailed to download {len(failed_entries)} file groups:")
+        for model_id, pattern, error in failed_entries:
+            print(f"  - {model_id} :: {pattern} ({type(error).__name__}: {error})")
+        raise SystemExit(1)
     else:
         print("All requested model files are downloaded.")
 
