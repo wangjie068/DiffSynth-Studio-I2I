@@ -127,11 +127,15 @@ def get_torch_dtype(dtype_name: str):
 SOURCE_REPO_ID_OVERRIDES = {
     ("huggingface", "jd-opensource/JoyAI-Image-Edit"): "jdopensource/JoyAI-Image-Edit",
     ("huggingface", "DiffSynth-Studio/Nexus-GenV2"): "modelscope/Nexus-GenV2",
+    ("modelscope", "DiffSynth-Studio/Nexus-GenV2"): "modelscope/Nexus-GenV2",
 }
 
 
 def get_model_base_path() -> Path:
     return Path(os.environ.get("DIFFSYNTH_MODEL_BASE_PATH", "./models"))
+
+
+NEXUS_GEN_MODEL_ID = "modelscope/Nexus-GenV2"
 
 
 def local_repo_exists(model_id: str, model_base_path: str | Path | None = None) -> bool:
@@ -595,12 +599,12 @@ def run_nexus_gen_editing(**kwargs):
         model_configs=[
             model_config_for_pattern(
                 ModelConfig,
-                model_id="DiffSynth-Studio/Nexus-GenV2",
+                model_id=NEXUS_GEN_MODEL_ID,
                 pattern="model*.safetensors",
             ),
             model_config_for_pattern(
                 ModelConfig,
-                model_id="DiffSynth-Studio/Nexus-GenV2",
+                model_id=NEXUS_GEN_MODEL_ID,
                 pattern="edit_decoder.bin",
             ),
             model_config_for_pattern(
@@ -621,7 +625,7 @@ def run_nexus_gen_editing(**kwargs):
         ],
         nexus_gen_processor_config=model_config_for_pattern(
             ModelConfig,
-            model_id="DiffSynth-Studio/Nexus-GenV2",
+            model_id=NEXUS_GEN_MODEL_ID,
             pattern="processor/",
         ),
     )
@@ -953,9 +957,9 @@ def download_entries_for_model(model_name: str) -> list[tuple[str, str]]:
         add_download_entry(entries, "stepfun-ai/Step1X-Edit", "vae.safetensors")
     elif model_name == "nexus_gen_editing":
         flux1_common_download_entries(entries)
-        add_download_entry(entries, "DiffSynth-Studio/Nexus-GenV2", "model*.safetensors")
-        add_download_entry(entries, "DiffSynth-Studio/Nexus-GenV2", "edit_decoder.bin")
-        add_download_entry(entries, "DiffSynth-Studio/Nexus-GenV2", "processor/")
+        add_download_entry(entries, NEXUS_GEN_MODEL_ID, "model*.safetensors")
+        add_download_entry(entries, NEXUS_GEN_MODEL_ID, "edit_decoder.bin")
+        add_download_entry(entries, NEXUS_GEN_MODEL_ID, "processor/")
     elif model_name == "flux2_dev":
         add_download_entry(entries, "black-forest-labs/FLUX.2-dev", "text_encoder/*.safetensors")
         add_download_entry(entries, "black-forest-labs/FLUX.2-dev", "transformer/*.safetensors")
