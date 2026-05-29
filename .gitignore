@@ -2,7 +2,9 @@
 /models
 /scripts
 /diffusers
+/outputs
 /.vscode
+/.hf_token
 *.pkl
 *.safetensors
 *.pth

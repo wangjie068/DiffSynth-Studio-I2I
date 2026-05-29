@@ -7,6 +7,7 @@ import json
 import math
 import os
 import queue
+import re
 import subprocess
 import sys
 import threading
@@ -154,7 +155,29 @@ def local_pattern_exists(
     root = base_path / model_id
     if not root.exists():
         return False
-    return bool(glob.glob(pattern_to_glob(pattern), root_dir=root))
+    matches = glob.glob(pattern_to_glob(pattern), root_dir=root)
+    if not matches:
+        return False
+    return sharded_files_complete(matches)
+
+
+def sharded_files_complete(matches: list[str]) -> bool:
+    groups: dict[str, tuple[int, set[int]]] = {}
+    shard_re = re.compile(r"^(?P<prefix>.+)-(?P<index>\d+)-of-(?P<total>\d+)\.safetensors$")
+    for match in matches:
+        name = Path(match).name
+        shard = shard_re.match(name)
+        if shard is None:
+            continue
+        prefix = str(Path(match).with_name(shard.group("prefix")))
+        index = int(shard.group("index"))
+        total = int(shard.group("total"))
+        _, seen = groups.setdefault(prefix, (total, set()))
+        seen.add(index)
+    for total, seen in groups.values():
+        if len(seen) < total:
+            return False
+    return True
 
 
 def repo_aliases(model_id: str) -> list[str]:
@@ -1069,7 +1092,9 @@ def command_download_models(args: argparse.Namespace) -> None:
         if args.fallback_source != "none" and args.fallback_source not in sources:
             sources.append(args.fallback_source)
         last_error = None
-        attempts = [("local", local_model_id)]
+        attempts = []
+        if has_local_files:
+            attempts.append(("local", local_model_id))
         for source in sources:
             source_model_id = repo_id_for_source(
                 model_id,

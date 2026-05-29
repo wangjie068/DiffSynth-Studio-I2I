@@ -62,6 +62,27 @@ DOWNLOAD_SOURCE=huggingface MODEL_BASE_PATH=./models \
   --fallback-source modelscope --continue-on-error
 ```
 
+访问 gated Hugging Face 模型时，需要先在网页上申请/接受模型条款，并在终端登录。推荐用环境变量或 `hf auth login`，不要把 token 写进命令历史：
+
+```bash
+export HF_TOKEN=你的新token
+```
+
+下载脚本也会自动读取仓库根目录的 `.hf_token` 文件，或 `HF_TOKEN_FILE` 指定的文件，并导出给 `huggingface_hub`。例如：
+
+```bash
+printf '%s' '你的新token' > .hf_token
+chmod 600 .hf_token
+
+SKIP_IMAGES=1 DOWNLOAD_SOURCE=huggingface \
+MODEL_BASE_PATH=/mnt/bn/genai-nebula/wangjie/Image_Gen/DiffSynth-Studio-I2I/models \
+bash examples/edit_pair_validation/download_all_i2i_models.sh \
+  --models flux1_kontext_dev nexus_gen_editing flux2_dev flux2_klein_9b \
+  --fallback-source modelscope --continue-on-error
+```
+
+如果 token 已经贴到聊天或日志里，请先在 Hugging Face 后台 revoke/rotate 后再继续。
+
 只下载部分模型：
 
 ```bash
