@@ -50,7 +50,7 @@ DOWNLOAD_SOURCE=huggingface MODEL_BASE_PATH=./models \
   bash examples/edit_pair_validation/download_all_i2i_models.sh
 ```
 
-脚本会自动处理少数模型在不同平台上的 repo id 差异，例如 JoyAI 在 ModelScope 是 `jd-opensource/JoyAI-Image-Edit`，在 Hugging Face 是 `jdopensource/JoyAI-Image-Edit`。
+脚本会自动处理少数模型在不同平台上的 repo id 差异，例如 JoyAI 在 ModelScope 是 `jd-opensource/JoyAI-Image-Edit`，在 Hugging Face 是 `jdopensource/JoyAI-Image-Edit`；Nexus-GenV2 在 DiffSynth 示例里是 `DiffSynth-Studio/Nexus-GenV2`，在 Hugging Face 是 `modelscope/Nexus-GenV2`。
 
 推理和下载都会先检查本地 `models/` 里是否已经存在任一别名目录，并且该目录下能匹配当前要用的文件 pattern。比如 `models/jdopensource/JoyAI-Image-Edit/transformer/transformer.pth` 已存在，即使当前 `--download-source modelscope`，脚本也会优先使用本地已有文件，不会强制切到 `models/jd-opensource/JoyAI-Image-Edit`。
 

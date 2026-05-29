@@ -126,6 +126,7 @@ def get_torch_dtype(dtype_name: str):
 
 SOURCE_REPO_ID_OVERRIDES = {
     ("huggingface", "jd-opensource/JoyAI-Image-Edit"): "jdopensource/JoyAI-Image-Edit",
+    ("huggingface", "DiffSynth-Studio/Nexus-GenV2"): "modelscope/Nexus-GenV2",
 }
 
 
