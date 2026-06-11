@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import argparse
 import base64
+import importlib.util
 import io
 import json
 import os
@@ -17,17 +18,19 @@ from tqdm import tqdm
 DEFAULT_BASE_URL = "https://gpt-i18n.byteintl.net/gpt/openapi/online/multimodal/crawl"
 DEFAULT_API_VERSION = "2024-03-01-preview"
 DEFAULT_MODEL = "gpt-5.4-mini-2026-03-17"
+DEFAULT_IMAGEX_SERVICE_PY = Path(__file__).with_name("imagex_service.py")
 
 
 UNIFIED_PROMPT = """# Role & Objective
 You are an expert e-commerce visual analysis AI creating a high-quality image-editing validation dataset.
 
-You will receive a grid image containing numbered product images from the same SKU/category bucket.
+You will receive numbered product images from the same SKU/category bucket, either as a numbered grid or as an ordered list of images.
 
 Your goals:
 1. Identify the best "Main Image".
 2. Select high-quality "Related Images" that depict the exact same product.
 3. For each valid [Main Image -> Related Image] pair, produce image-editing instructions and text-preservation metadata.
+4. The related image index MUST be different from the main image index. Never pair an image with itself.
 
 # Strict Related Image Criteria
 A valid related image MUST satisfy ALL:
@@ -112,26 +115,127 @@ def iter_annotations(json_dir: Path):
             data = json.loads(json_path.read_text())
         except Exception:
             continue
-        annotations = data.get("annotations") if isinstance(data, dict) else None
-        if not isinstance(annotations, list):
-            continue
+        yield from iter_annotation_records(data, json_path)
+
+
+def iter_annotation_records(data, json_path: Path):
+    if isinstance(data, list):
+        for item in data:
+            record = normalize_annotation_item(item, None, json_path)
+            if record is not None:
+                yield record
+        return
+
+    if not isinstance(data, dict):
+        return
+
+    images = data.get("images")
+    annotations = data.get("annotations")
+    if isinstance(images, list):
+        image_by_id = {
+            image.get("id", image.get("image_id")): image
+            for image in images
+            if isinstance(image, dict)
+        }
+        if isinstance(annotations, list):
+            for item in annotations:
+                if not isinstance(item, dict):
+                    continue
+                image = image_by_id.get(item.get("image_id"))
+                record = normalize_annotation_item(item, image, json_path)
+                if record is not None:
+                    yield record
+        else:
+            for image in images:
+                record = normalize_annotation_item(image, None, json_path)
+                if record is not None:
+                    yield record
+        return
+
+    if isinstance(annotations, list):
         for item in annotations:
-            if isinstance(item, dict) and "fpath" in item and "category_id" in item:
-                yield {
-                    "annotation_json": str(json_path),
-                    "fpath": item["fpath"],
-                    "category_id": str(item["category_id"]),
-                }
+            record = normalize_annotation_item(item, None, json_path)
+            if record is not None:
+                yield record
+
+
+def normalize_annotation_item(item: dict | None, image: dict | None, json_path: Path) -> dict | None:
+    if not isinstance(item, dict):
+        return None
+    merged = {}
+    if isinstance(image, dict):
+        merged.update(image)
+    merged.update(item)
+
+    fpath = first_present(
+        merged,
+        ["fpath", "file_name", "filename", "path", "image_path", "relative_path", "url"],
+    )
+    image_id = merged.get("image_id", merged.get("id"))
+    category_id = merged.get("category_id", merged.get("label", merged.get("class_id")))
+
+    if fpath is None and image_id is not None:
+        fpath = str(image_id)
+    if fpath is None:
+        return None
+    if category_id is None:
+        category_id = infer_category_id(str(fpath))
+    if category_id is None:
+        return None
+    return {
+        "annotation_json": str(json_path),
+        "fpath": str(fpath),
+        "image_id": None if image_id is None else str(image_id),
+        "category_id": str(category_id),
+    }
+
+
+def first_present(item: dict, keys: list[str]):
+    for key in keys:
+        value = item.get(key)
+        if value not in [None, ""]:
+            return value
+    return None
+
+
+def infer_category_id(fpath: str) -> str | None:
+    parts = Path(fpath.lstrip("/")).parts
+    if len(parts) >= 2:
+        return parts[-2]
+    return None
 
 
 def resolve_image_path(image_root: Path, fpath: str) -> Path | None:
     rel = str(fpath).lstrip("/")
-    candidates = [image_root / rel, image_root / Path(rel).name]
+    rel_path = Path(rel)
+    candidates = [
+        image_root / rel_path,
+        image_root / "train" / rel_path,
+        image_root / "val" / rel_path,
+        image_root / "train_val" / rel_path,
+        image_root / "images" / rel_path,
+        image_root / rel_path.name,
+    ]
+    if rel_path.suffix == "":
+        for ext in [".jpg", ".jpeg", ".png", ".webp"]:
+            candidates.extend([
+                image_root / f"{rel}{ext}",
+                image_root / "train" / f"{rel}{ext}",
+                image_root / "val" / f"{rel}{ext}",
+                image_root / "train_val" / f"{rel}{ext}",
+                image_root / "images" / f"{rel}{ext}",
+            ])
     for candidate in candidates:
         if candidate.is_file():
             return candidate
-    matches = list(image_root.rglob(Path(rel).name))
-    return matches[0] if matches else None
+    search_names = [rel_path.name]
+    if rel_path.suffix == "":
+        search_names.extend(f"{rel_path.name}{ext}" for ext in [".jpg", ".jpeg", ".png", ".webp"])
+    for name in search_names:
+        matches = list(image_root.rglob(name))
+        if matches:
+            return matches[0]
+    return None
 
 
 def collect_groups(json_dir: Path, image_root: Path, max_categories: int, max_per_category: int, shuffle: bool):
@@ -175,7 +279,94 @@ def make_grid(records: list[dict], thumb: int, cols: int) -> tuple[str, list[dic
     return "data:image/jpeg;base64," + base64.b64encode(buffer.getvalue()).decode("utf-8"), records
 
 
-def call_model(client, model: str, grid_url: str, retries: int):
+def load_imgx_service(imagex_service_py: Path):
+    spec = importlib.util.spec_from_file_location("imagex_service_test", imagex_service_py)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"Cannot load module from {imagex_service_py}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    if not hasattr(module, "ImgXService"):
+        raise RuntimeError(f"{imagex_service_py} must define ImgXService")
+    return module.ImgXService()
+
+
+def load_url_cache(path: Path | None) -> dict[str, str]:
+    cache = {}
+    if path is None or not path.exists():
+        return cache
+    with path.open("r", encoding="utf-8") as fin:
+        for line in fin:
+            try:
+                item = json.loads(line)
+            except Exception:
+                continue
+            image_path = item.get("image_path")
+            imagex_url = item.get("imagex_url")
+            if image_path and imagex_url:
+                cache[str(image_path)] = str(imagex_url)
+    return cache
+
+
+def append_url_cache(path: Path, items: list[dict]):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as fout:
+        for item in items:
+            fout.write(json.dumps(item, ensure_ascii=False) + "\n")
+        fout.flush()
+
+
+def ensure_imagex_urls(
+    records: list[dict],
+    imagex_service,
+    url_cache: dict[str, str],
+    url_cache_path: Path,
+    upload_batch_size: int,
+):
+    missing = [record for record in records if record["image_path"] not in url_cache]
+    for start in range(0, len(missing), upload_batch_size):
+        batch = missing[start:start + upload_batch_size]
+        paths = [record["image_path"] for record in batch]
+        urls = imagex_service.imagex_upload(paths)
+        cache_items = []
+        for record, url in zip(batch, urls):
+            url_cache[record["image_path"]] = url
+            cache_items.append({
+                "image_path": record["image_path"],
+                "imagex_url": url,
+                "fpath": record.get("fpath"),
+                "image_id": record.get("image_id"),
+                "category_id": record.get("category_id"),
+            })
+        append_url_cache(url_cache_path, cache_items)
+    for index, record in enumerate(records):
+        record["grid_index"] = index
+        record["imagex_url"] = url_cache[record["image_path"]]
+    return records
+
+
+def build_image_content(records: list[dict] | None = None, grid_url: str | None = None):
+    if records is not None and all(record.get("imagex_url") for record in records):
+        content = [{
+            "type": "text",
+            "text": (
+                UNIFIED_PROMPT
+                + "\n\nThe following images are provided in order. "
+                  "Use these zero-based indices exactly: #0, #1, #2, ..."
+            ),
+        }]
+        for index, record in enumerate(records):
+            content.append({"type": "text", "text": f"Image #{index}:"})
+            content.append({"type": "image_url", "image_url": {"url": record["imagex_url"]}})
+        return content
+    if grid_url is None:
+        raise RuntimeError("Either uploaded image records or grid_url is required.")
+    return [
+        {"type": "text", "text": UNIFIED_PROMPT},
+        {"type": "image_url", "image_url": {"url": grid_url}},
+    ]
+
+
+def call_model(client, model: str, retries: int, records: list[dict] | None = None, grid_url: str | None = None):
     last_error = None
     for attempt in range(retries):
         try:
@@ -183,10 +374,7 @@ def call_model(client, model: str, grid_url: str, retries: int):
                 model=model,
                 messages=[{
                     "role": "user",
-                    "content": [
-                        {"type": "text", "text": UNIFIED_PROMPT},
-                        {"type": "image_url", "image_url": {"url": grid_url}},
-                    ],
+                    "content": build_image_content(records=records, grid_url=grid_url),
                 }],
             )
             return parse_json_response(completion.choices[0].message.content)
@@ -210,6 +398,11 @@ def main():
     parser.add_argument("--min-suitability-score", type=float, default=0.6)
     parser.add_argument("--require-small-text", action="store_true")
     parser.add_argument("--shuffle", action="store_true")
+    parser.add_argument("--overwrite", action="store_true")
+    parser.add_argument("--imagex-service-py", type=Path, default=DEFAULT_IMAGEX_SERVICE_PY)
+    parser.add_argument("--no-imagex-upload", action="store_true")
+    parser.add_argument("--url-cache-jsonl", type=Path, default=None)
+    parser.add_argument("--upload-batch-size", type=int, default=8)
     parser.add_argument("--sleep", type=float, default=0.2)
     parser.add_argument("--retries", type=int, default=3)
     parser.add_argument("--base-url", default=os.environ.get("GPT_BASE_URL", DEFAULT_BASE_URL))
@@ -234,16 +427,42 @@ def main():
     client = AzureOpenAI(azure_endpoint=args.base_url, api_version=args.api_version, api_key=args.api_key)
     args.out.parent.mkdir(parents=True, exist_ok=True)
     valid_pairs_path = args.out.with_suffix(".pairs.jsonl")
+    url_cache_path = args.url_cache_jsonl or args.out.with_suffix(".urls.jsonl")
+    if args.overwrite:
+        for path in [args.out, valid_pairs_path, url_cache_path]:
+            if path.exists():
+                path.unlink()
+    use_imagex = not args.no_imagex_upload and args.imagex_service_py is not None and args.imagex_service_py.exists()
+    imagex_service = load_imgx_service(args.imagex_service_py) if use_imagex else None
+    if not args.no_imagex_upload and imagex_service is None:
+        print(f"ImageX service file not found, using local grid data URL mode: {args.imagex_service_py}", flush=True)
+    url_cache = load_url_cache(url_cache_path)
 
     with args.out.open("a", encoding="utf-8") as fout, valid_pairs_path.open("a", encoding="utf-8") as pfout:
         for category_id, records in tqdm(groups, desc="mining unified pairs"):
-            grid_url, indexed_records = make_grid(records, args.thumb, args.cols)
+            if imagex_service is not None:
+                indexed_records = ensure_imagex_urls(
+                    records,
+                    imagex_service=imagex_service,
+                    url_cache=url_cache,
+                    url_cache_path=url_cache_path,
+                    upload_batch_size=args.upload_batch_size,
+                )
+                grid_url = None
+            else:
+                grid_url, indexed_records = make_grid(records, args.thumb, args.cols)
             group_output = {
                 "category_id": category_id,
                 "images": indexed_records,
             }
             try:
-                result = call_model(client, args.model, grid_url, args.retries)
+                result = call_model(
+                    client,
+                    args.model,
+                    args.retries,
+                    records=indexed_records if imagex_service is not None else None,
+                    grid_url=grid_url,
+                )
                 group_output.update(result)
             except Exception as error:
                 group_output["error"] = f"{type(error).__name__}: {error}"
@@ -257,6 +476,8 @@ def main():
                     target_index = pair.get("related_image_index")
                     if not pair.get("is_valid_pair"):
                         continue
+                    if target_index == main_index:
+                        continue
                     if float(pair.get("identity_confidence", 0.0)) < args.min_identity_confidence:
                         continue
                     if float(pair.get("quality_score", 0.0)) < args.min_quality_score:
@@ -266,6 +487,8 @@ def main():
                     if args.require_small_text and not (group_output.get("main_has_small_text") or pair.get("has_small_text")):
                         continue
                     if not isinstance(target_index, int) or not 0 <= target_index < len(indexed_records):
+                        continue
+                    if indexed_records[target_index].get("image_path") == main_image.get("image_path"):
                         continue
                     unified_pair = {
                         "category_id": category_id,
