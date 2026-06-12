@@ -23,27 +23,24 @@ import all_i2i_reference_to_target as base
 DEFAULT_DESIGN_SOURCE = "outputs/edit_pair_validation/amazon_lipcare_design/design_preview.png"
 DEFAULT_TARGET = "data/edit_pair_validation/amazon_lipcare/target.jpg"
 DEFAULT_OUTPUT_DIR = "outputs/edit_pair_validation/design_i2i_to_target"
-DEFAULT_PRODUCT_REFERENCE = "data/edit_pair_validation/amazon_lipcare/source.jpg"
 
 DESIGN_TO_TARGET_PROMPT = (
-    "Create the final photorealistic square ecommerce advertising poster. Use Picture 1 as the precise publication "
-    "design draft and layout blueprint. If additional pictures are provided, use Picture 2 as the exact high-resolution "
-    "package-label reference and any later picture as product-identity reference; do not treat them as extra products "
-    "to place in the scene. The intended result should match the Amazon target ad style: "
-    "a clean white-background lip-care product poster with a yellow CNP Laboratory lip-care tube diagonally placed "
-    "on the lower right, held by a small polished silver cosmetic applicator clip from the upper right, with glossy "
-    "amber honey serum dripping into a small puddle at the bottom. Keep the left-side typography and copy from the "
-    "design draft: the large pink headline 'Ampule-Infused Lip Care', the gray copy 'Get honey-glow lips with "
-    "ultra-dewy hydration', and the vertical benefit list with pink plus signs: 'Dead skin cells', 'Wrinkles', "
-    "'Elasticity', 'Hydration', 'Glow'. Improve the rough placeholder honey, clip, shadows, and contact reflections "
-    "into realistic studio product-ad elements. Preserve the existing yellow product tube from the design draft as "
-    "the same product identity: do not change the tube shape, logo placement, brand text, label layout, or any visible "
-    "small package text. Keep the product label readable and exactly as close as possible to the input design draft; "
-    "when a high-resolution label reference is provided, preserve that printed package text and logo geometry even more "
-    "strictly than the rough draft. "
-    "do not invent, misspell, rewrite, replace, or redesign the package text. The design draft already contains the "
-    "correct composition, product scale, product angle, and ad copy; refine it into a polished target-like product "
-    "advertisement rather than creating a new design."
+    "Create the final photorealistic square ecommerce advertising poster in the same composition as Picture 1. "
+    "Picture 1 is the publication design draft and layout blueprint. If Picture 2 is provided, it is only a "
+    "high-resolution package-label reference for the yellow tube; preserve its logo geometry, brand text, and small "
+    "package text in the tube-label area. Do not place Picture 2 as a separate object. The result should match the "
+    "Amazon target ad style: a clean white-background lip-care product poster with a yellow CNP Laboratory lip-care "
+    "tube diagonally placed on the lower right, held by a small polished silver cosmetic applicator clip from the upper "
+    "right. Keep the left-side typography and copy from the design draft: the large pink headline 'Ampule-Infused Lip "
+    "Care', the gray copy 'Get honey-glow lips with ultra-dewy hydration', and the vertical benefit list with pink plus "
+    "signs: 'Dead skin cells', 'Wrinkles', 'Elasticity', 'Hydration', 'Glow'. The flat orange puddle and drip in the "
+    "design draft are only rough placeholders. Replace them completely with photorealistic glossy amber honey serum: "
+    "transparent golden highlights, natural viscosity, surface tension, a smooth continuous drip from the tube nozzle, "
+    "a small realistic pooled mound at the bottom, subtle refraction, wet specular reflections, and soft contact "
+    "shadows. Make the clip, tube plastic, nozzle, honey, reflections, and background look like a polished studio "
+    "product photograph. Preserve the existing yellow product tube identity: do not change the tube silhouette, logo "
+    "placement, label layout, brand text, or visible small package text. Refine the design draft into a polished "
+    "target-like product advertisement rather than creating a new layout."
 )
 
 DESIGN_TO_TARGET_NEGATIVE_PROMPT = (
@@ -571,7 +568,7 @@ def add_generation_args(parser: argparse.ArgumentParser, seed_required: bool = T
     parser.add_argument("--width", type=int, default=1024)
     parser.add_argument("--dtype", choices=["bfloat16", "float16"], default="bfloat16")
     parser.add_argument("--device", default="cuda")
-    parser.add_argument("--denoising-strength", type=float, default=0.70)
+    parser.add_argument("--denoising-strength", type=float, default=0.85)
     parser.add_argument(
         "--use-roi-reference",
         action="store_true",
