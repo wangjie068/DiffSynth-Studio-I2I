@@ -1,4 +1,5 @@
 import torch, math
+import torch.nn.functional as F
 from PIL import Image
 from typing import Union
 from tqdm import tqdm
@@ -131,6 +132,15 @@ class QwenImagePipeline(BasePipeline):
         edit_rope_interpolation: bool = False,
         edit_latent_attention_repeat_indices: list[int] = None,
         edit_latent_attention_repeat: int = 1,
+        edit_latent_ot_reference_indices: list[int] = None,
+        edit_latent_ot_alpha: float = 0.0,
+        edit_latent_ot_start_step: float = 0.6,
+        edit_latent_ot_target_tokens: int = 128,
+        edit_latent_ot_source_tokens: int = 256,
+        edit_latent_ot_temperature: float = 0.07,
+        edit_latent_ot_iters: int = 6,
+        edit_latent_ot_block_start: int = 30,
+        edit_latent_ot_block_interval: int = 5,
         # Qwen-Image-Edit-2511
         zero_cond_t: bool = False,
         # Qwen-Image-Layered
@@ -168,6 +178,15 @@ class QwenImagePipeline(BasePipeline):
             "edit_image": edit_image, "edit_image_auto_resize": edit_image_auto_resize, "edit_rope_interpolation": edit_rope_interpolation, 
             "edit_latent_attention_repeat_indices": edit_latent_attention_repeat_indices,
             "edit_latent_attention_repeat": edit_latent_attention_repeat,
+            "edit_latent_ot_reference_indices": edit_latent_ot_reference_indices,
+            "edit_latent_ot_alpha": edit_latent_ot_alpha,
+            "edit_latent_ot_start_step": edit_latent_ot_start_step,
+            "edit_latent_ot_target_tokens": edit_latent_ot_target_tokens,
+            "edit_latent_ot_source_tokens": edit_latent_ot_source_tokens,
+            "edit_latent_ot_temperature": edit_latent_ot_temperature,
+            "edit_latent_ot_iters": edit_latent_ot_iters,
+            "edit_latent_ot_block_start": edit_latent_ot_block_start,
+            "edit_latent_ot_block_interval": edit_latent_ot_block_interval,
             "context_image": context_image,
             "zero_cond_t": zero_cond_t,
             "layer_input_image": layer_input_image,
@@ -703,6 +722,66 @@ class QwenImageUnit_ContextImageEmbedder(PipelineUnit):
         return {"context_latents": context_latents}
 
 
+def sinkhorn_transport(similarity: torch.Tensor, temperature: float, iters: int) -> torch.Tensor:
+    temperature = max(float(temperature), 1e-4)
+    transport = torch.exp(similarity / temperature)
+    transport = transport + 1e-8
+    for _ in range(max(int(iters), 1)):
+        transport = transport / transport.sum(dim=-1, keepdim=True).clamp_min(1e-8)
+        transport = transport / transport.sum(dim=-2, keepdim=True).clamp_min(1e-8)
+    return transport / transport.sum(dim=-1, keepdim=True).clamp_min(1e-8)
+
+
+def ot_guided_reference_injection(
+    image: torch.Tensor,
+    target_slice: tuple[int, int],
+    reference_slices: list[tuple[int, int]],
+    alpha: float,
+    target_tokens: int,
+    source_tokens: int,
+    temperature: float,
+    sinkhorn_iters: int,
+) -> torch.Tensor:
+    if not reference_slices:
+        return image
+
+    target_start, target_end = target_slice
+    target = image[:, target_start:target_end]
+    references = torch.cat([image[:, start:end] for start, end in reference_slices if end > start], dim=1)
+    if target.numel() == 0 or references.numel() == 0:
+        return image
+
+    batch_size, target_len, _ = target.shape
+    source_len = references.shape[1]
+    target_k = max(1, min(int(target_tokens), target_len))
+    source_k = max(1, min(int(source_tokens), source_len))
+
+    output = image.clone()
+    for batch_id in range(batch_size):
+        target_fp32 = target[batch_id].float()
+        source_fp32 = references[batch_id].float()
+
+        source_detail = (source_fp32 - source_fp32.mean(dim=0, keepdim=True)).norm(dim=-1)
+        source_indices = torch.topk(source_detail, k=source_k, largest=True).indices
+        source_selected = source_fp32.index_select(0, source_indices)
+
+        target_norm = F.normalize(target_fp32, dim=-1)
+        source_norm = F.normalize(source_selected, dim=-1)
+        target_source_similarity = target_norm @ source_norm.transpose(0, 1)
+        target_scores = target_source_similarity.max(dim=-1).values
+        target_indices = torch.topk(target_scores, k=target_k, largest=True).indices
+
+        target_selected = target_fp32.index_select(0, target_indices)
+        target_selected_norm = F.normalize(target_selected, dim=-1)
+        similarity = target_selected_norm @ source_norm.transpose(0, 1)
+        transport = sinkhorn_transport(similarity, temperature=temperature, iters=sinkhorn_iters)
+        injected = transport @ source_selected
+
+        target_updates = target_selected + float(alpha) * (injected - target_selected)
+        output[batch_id, target_start + target_indices] = target_updates.to(dtype=output.dtype)
+    return output
+
+
 def model_fn_qwen_image(
     dit: QwenImageDiT = None,
     blockwise_controlnet: QwenImageBlockwiseMultiControlNet = None,
@@ -722,6 +801,15 @@ def model_fn_qwen_image(
     edit_latents=None,
     edit_latent_attention_repeat_indices=None,
     edit_latent_attention_repeat=1,
+    edit_latent_ot_reference_indices=None,
+    edit_latent_ot_alpha=0.0,
+    edit_latent_ot_start_step=0.6,
+    edit_latent_ot_target_tokens=128,
+    edit_latent_ot_source_tokens=256,
+    edit_latent_ot_temperature=0.07,
+    edit_latent_ot_iters=6,
+    edit_latent_ot_block_start=30,
+    edit_latent_ot_block_interval=5,
     layer_input_latents=None,
     layer_num=None,
     context_latents=None,
@@ -743,6 +831,7 @@ def model_fn_qwen_image(
     
     image = rearrange(latents, "(B N) C (H P) (W Q) -> B (N H W) (C P Q)", H=height//16, W=width//16, P=2, Q=2, N=layer_num)
     image_seq_len = image.shape[1]
+    edit_latent_spans = []
 
     if context_latents is not None:
         img_shapes += [(context_latents.shape[0], context_latents.shape[2]//2, context_latents.shape[3]//2)]
@@ -760,6 +849,10 @@ def model_fn_qwen_image(
             edit_latents_list = repeated_edit_latents
         img_shapes += [(e.shape[0], e.shape[2]//2, e.shape[3]//2) for e in edit_latents_list]
         edit_image = [rearrange(e, "B C (H P) (W Q) -> B (H W) (C P Q)", H=e.shape[2]//2, W=e.shape[3]//2, P=2, Q=2) for e in edit_latents_list]
+        cursor = image.shape[1]
+        for e in edit_image:
+            edit_latent_spans.append((cursor, cursor + e.shape[1]))
+            cursor += e.shape[1]
         image = torch.cat([image] + edit_image, dim=1)
     if layer_input_latents is not None:
         layer_num = layer_num + 1
@@ -800,6 +893,13 @@ def model_fn_qwen_image(
         blockwise_controlnet_conditioning = blockwise_controlnet.preprocess(
             blockwise_controlnet_inputs, blockwise_controlnet_conditioning)
 
+    ot_enabled = (
+        edit_latent_ot_reference_indices is not None
+        and edit_latent_ot_alpha > 0
+        and edit_latent_spans
+        and progress_id / max(num_inference_steps - 1, 1) >= edit_latent_ot_start_step
+    )
+
     for block_id, block in enumerate(dit.transformer_blocks):
         text, image = gradient_checkpoint_forward(
             block,
@@ -813,6 +913,25 @@ def model_fn_qwen_image(
             enable_fp8_attention=enable_fp8_attention,
             modulate_index=modulate_index,
         )
+        if (
+            ot_enabled
+            and block_id >= edit_latent_ot_block_start
+            and (block_id - edit_latent_ot_block_start) % max(edit_latent_ot_block_interval, 1) == 0
+        ):
+            image = ot_guided_reference_injection(
+                image=image,
+                target_slice=(0, image_seq_len),
+                reference_slices=[
+                    edit_latent_spans[index]
+                    for index in edit_latent_ot_reference_indices
+                    if 0 <= index < len(edit_latent_spans)
+                ],
+                alpha=edit_latent_ot_alpha,
+                target_tokens=edit_latent_ot_target_tokens,
+                source_tokens=edit_latent_ot_source_tokens,
+                temperature=edit_latent_ot_temperature,
+                sinkhorn_iters=edit_latent_ot_iters,
+            )
         if blockwise_controlnet_conditioning is not None:
             image_slice = image[:, :image_seq_len].clone()
             controlnet_output = blockwise_controlnet.blockwise_forward(

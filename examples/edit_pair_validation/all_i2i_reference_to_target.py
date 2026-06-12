@@ -276,6 +276,15 @@ def qwen_runner(
     extra_edit_images: list[Image.Image] | None = None,
     edit_latent_attention_repeat_indices: list[int] | None = None,
     edit_latent_attention_repeat: int = 1,
+    edit_latent_ot_reference_indices: list[int] | None = None,
+    edit_latent_ot_alpha: float = 0.0,
+    edit_latent_ot_start_step: float = 0.6,
+    edit_latent_ot_target_tokens: int = 128,
+    edit_latent_ot_source_tokens: int = 256,
+    edit_latent_ot_temperature: float = 0.07,
+    edit_latent_ot_iters: int = 6,
+    edit_latent_ot_block_start: int = 30,
+    edit_latent_ot_block_interval: int = 5,
 ):
     import torch
 
@@ -325,6 +334,16 @@ def qwen_runner(
     if edit_latent_attention_repeat_indices is not None and edit_latent_attention_repeat > 1:
         kwargs["edit_latent_attention_repeat_indices"] = edit_latent_attention_repeat_indices
         kwargs["edit_latent_attention_repeat"] = edit_latent_attention_repeat
+    if edit_latent_ot_reference_indices is not None and edit_latent_ot_alpha > 0:
+        kwargs["edit_latent_ot_reference_indices"] = edit_latent_ot_reference_indices
+        kwargs["edit_latent_ot_alpha"] = edit_latent_ot_alpha
+        kwargs["edit_latent_ot_start_step"] = edit_latent_ot_start_step
+        kwargs["edit_latent_ot_target_tokens"] = edit_latent_ot_target_tokens
+        kwargs["edit_latent_ot_source_tokens"] = edit_latent_ot_source_tokens
+        kwargs["edit_latent_ot_temperature"] = edit_latent_ot_temperature
+        kwargs["edit_latent_ot_iters"] = edit_latent_ot_iters
+        kwargs["edit_latent_ot_block_start"] = edit_latent_ot_block_start
+        kwargs["edit_latent_ot_block_interval"] = edit_latent_ot_block_interval
     return pipe(
         prompt=prompt,
         negative_prompt=negative_prompt,

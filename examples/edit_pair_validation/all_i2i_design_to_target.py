@@ -119,7 +119,7 @@ def prepare_roi_reference_images(
     output_dir: Path,
     model_name: str,
 ) -> tuple[list[Image.Image], list[dict]]:
-    if not args.use_roi_reference and not args.use_roi_attention_steering:
+    if not args.use_roi_reference and not args.use_roi_attention_steering and not args.use_roi_ot_steering:
         return [], []
     if model_name not in QWEN_MULTI_IMAGE_MODELS:
         return [], []
@@ -203,6 +203,16 @@ def generate_one(args: argparse.Namespace) -> None:
     if args.use_roi_attention_steering and extra_edit_images and spec.name in QWEN_MULTI_IMAGE_MODELS:
         runner_kwargs["edit_latent_attention_repeat_indices"] = [1]
         runner_kwargs["edit_latent_attention_repeat"] = args.roi_attention_repeat
+    if args.use_roi_ot_steering and extra_edit_images and spec.name in QWEN_MULTI_IMAGE_MODELS:
+        runner_kwargs["edit_latent_ot_reference_indices"] = [1]
+        runner_kwargs["edit_latent_ot_alpha"] = args.roi_ot_alpha
+        runner_kwargs["edit_latent_ot_start_step"] = args.roi_ot_start_step
+        runner_kwargs["edit_latent_ot_target_tokens"] = args.roi_ot_target_tokens
+        runner_kwargs["edit_latent_ot_source_tokens"] = args.roi_ot_source_tokens
+        runner_kwargs["edit_latent_ot_temperature"] = args.roi_ot_temperature
+        runner_kwargs["edit_latent_ot_iters"] = args.roi_ot_iters
+        runner_kwargs["edit_latent_ot_block_start"] = args.roi_ot_block_start
+        runner_kwargs["edit_latent_ot_block_interval"] = args.roi_ot_block_interval
     image = spec.runner(**runner_kwargs)
     image.save(output_path)
     metadata = {
@@ -220,6 +230,19 @@ def generate_one(args: argparse.Namespace) -> None:
             "method": "repeat_roi_reference_edit_latents",
             "repeat_indices": [1] if args.use_roi_attention_steering and extra_edit_images and spec.name in QWEN_MULTI_IMAGE_MODELS else [],
             "repeat": args.roi_attention_repeat,
+        },
+        "roi_ot_steering": {
+            "enabled": bool(args.use_roi_ot_steering and extra_edit_images and spec.name in QWEN_MULTI_IMAGE_MODELS),
+            "method": "auto_target_token_sinkhorn_hidden_injection",
+            "reference_indices": [1] if args.use_roi_ot_steering and extra_edit_images and spec.name in QWEN_MULTI_IMAGE_MODELS else [],
+            "alpha": args.roi_ot_alpha,
+            "start_step": args.roi_ot_start_step,
+            "target_tokens": args.roi_ot_target_tokens,
+            "source_tokens": args.roi_ot_source_tokens,
+            "temperature": args.roi_ot_temperature,
+            "iters": args.roi_ot_iters,
+            "block_start": args.roi_ot_block_start,
+            "block_interval": args.roi_ot_block_interval,
         },
         "seed": args.seed,
         "height": args.height,
@@ -350,6 +373,16 @@ def build_generate_command(args: argparse.Namespace, job: EvalJob, source_path: 
     if args.use_roi_attention_steering:
         command.append("--use-roi-attention-steering")
         command.extend(["--roi-attention-repeat", str(args.roi_attention_repeat)])
+    if args.use_roi_ot_steering:
+        command.append("--use-roi-ot-steering")
+        command.extend(["--roi-ot-alpha", str(args.roi_ot_alpha)])
+        command.extend(["--roi-ot-start-step", str(args.roi_ot_start_step)])
+        command.extend(["--roi-ot-target-tokens", str(args.roi_ot_target_tokens)])
+        command.extend(["--roi-ot-source-tokens", str(args.roi_ot_source_tokens)])
+        command.extend(["--roi-ot-temperature", str(args.roi_ot_temperature)])
+        command.extend(["--roi-ot-iters", str(args.roi_ot_iters)])
+        command.extend(["--roi-ot-block-start", str(args.roi_ot_block_start)])
+        command.extend(["--roi-ot-block-interval", str(args.roi_ot_block_interval)])
     command.extend(["--roi-reference-box", args.roi_reference_box])
     command.extend(["--roi-reference-size", str(args.roi_reference_size)])
     if args.roi_reference_image:
@@ -600,6 +633,27 @@ def add_generation_args(parser: argparse.ArgumentParser, seed_required: bool = T
         default=3,
         help="How many total copies of the ROI reference edit latents to expose to DiT attention.",
     )
+    parser.add_argument(
+        "--use-roi-ot-steering",
+        action="store_true",
+        help=(
+            "For Qwen multi-image edit models, add the label ROI reference and use Sinkhorn/OT to automatically "
+            "inject its hidden states into similar target tokens in late DiT blocks. No target mask is required."
+        ),
+    )
+    parser.add_argument("--roi-ot-alpha", type=float, default=0.18)
+    parser.add_argument(
+        "--roi-ot-start-step",
+        type=float,
+        default=0.60,
+        help="Fraction of denoising progress after which OT hidden injection starts.",
+    )
+    parser.add_argument("--roi-ot-target-tokens", type=int, default=128)
+    parser.add_argument("--roi-ot-source-tokens", type=int, default=256)
+    parser.add_argument("--roi-ot-temperature", type=float, default=0.07)
+    parser.add_argument("--roi-ot-iters", type=int, default=6)
+    parser.add_argument("--roi-ot-block-start", type=int, default=30)
+    parser.add_argument("--roi-ot-block-interval", type=int, default=5)
     parser.add_argument(
         "--roi-reference-image",
         default=None,
