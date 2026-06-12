@@ -274,6 +274,8 @@ def qwen_runner(
     lightning: bool = False,
     denoising_strength: float | None = None,
     extra_edit_images: list[Image.Image] | None = None,
+    edit_latent_attention_repeat_indices: list[int] | None = None,
+    edit_latent_attention_repeat: int = 1,
 ):
     import torch
 
@@ -320,6 +322,9 @@ def qwen_runner(
     else:
         edit_image = source
     kwargs = {"zero_cond_t": zero_cond_t} if zero_cond_t else {}
+    if edit_latent_attention_repeat_indices is not None and edit_latent_attention_repeat > 1:
+        kwargs["edit_latent_attention_repeat_indices"] = edit_latent_attention_repeat_indices
+        kwargs["edit_latent_attention_repeat"] = edit_latent_attention_repeat
     return pipe(
         prompt=prompt,
         negative_prompt=negative_prompt,

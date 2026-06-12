@@ -129,6 +129,8 @@ class QwenImagePipeline(BasePipeline):
         edit_image: list[Image.Image] = None,
         edit_image_auto_resize: bool = True,
         edit_rope_interpolation: bool = False,
+        edit_latent_attention_repeat_indices: list[int] = None,
+        edit_latent_attention_repeat: int = 1,
         # Qwen-Image-Edit-2511
         zero_cond_t: bool = False,
         # Qwen-Image-Layered
@@ -164,6 +166,8 @@ class QwenImagePipeline(BasePipeline):
             "tiled": tiled, "tile_size": tile_size, "tile_stride": tile_stride,
             "eligen_entity_prompts": eligen_entity_prompts, "eligen_entity_masks": eligen_entity_masks, "eligen_enable_on_negative": eligen_enable_on_negative,
             "edit_image": edit_image, "edit_image_auto_resize": edit_image_auto_resize, "edit_rope_interpolation": edit_rope_interpolation, 
+            "edit_latent_attention_repeat_indices": edit_latent_attention_repeat_indices,
+            "edit_latent_attention_repeat": edit_latent_attention_repeat,
             "context_image": context_image,
             "zero_cond_t": zero_cond_t,
             "layer_input_image": layer_input_image,
@@ -716,6 +720,8 @@ def model_fn_qwen_image(
     entity_prompt_emb_mask=None,
     entity_masks=None,
     edit_latents=None,
+    edit_latent_attention_repeat_indices=None,
+    edit_latent_attention_repeat=1,
     layer_input_latents=None,
     layer_num=None,
     context_latents=None,
@@ -744,6 +750,14 @@ def model_fn_qwen_image(
         image = torch.cat([image, context_image], dim=1)
     if edit_latents is not None:
         edit_latents_list = edit_latents if isinstance(edit_latents, list) else [edit_latents]
+        if edit_latent_attention_repeat_indices is not None and edit_latent_attention_repeat > 1:
+            repeat_indices = set(edit_latent_attention_repeat_indices)
+            repeated_edit_latents = []
+            for edit_index, edit_latent in enumerate(edit_latents_list):
+                repeated_edit_latents.append(edit_latent)
+                if edit_index in repeat_indices:
+                    repeated_edit_latents.extend([edit_latent] * (edit_latent_attention_repeat - 1))
+            edit_latents_list = repeated_edit_latents
         img_shapes += [(e.shape[0], e.shape[2]//2, e.shape[3]//2) for e in edit_latents_list]
         edit_image = [rearrange(e, "B C (H P) (W Q) -> B (H W) (C P Q)", H=e.shape[2]//2, W=e.shape[3]//2, P=2, Q=2) for e in edit_latents_list]
         image = torch.cat([image] + edit_image, dim=1)

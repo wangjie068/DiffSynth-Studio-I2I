@@ -119,7 +119,7 @@ def prepare_roi_reference_images(
     output_dir: Path,
     model_name: str,
 ) -> tuple[list[Image.Image], list[dict]]:
-    if not args.use_roi_reference:
+    if not args.use_roi_reference and not args.use_roi_attention_steering:
         return [], []
     if model_name not in QWEN_MULTI_IMAGE_MODELS:
         return [], []
@@ -200,6 +200,9 @@ def generate_one(args: argparse.Namespace) -> None:
     }
     if extra_edit_images:
         runner_kwargs["extra_edit_images"] = extra_edit_images
+    if args.use_roi_attention_steering and extra_edit_images and spec.name in QWEN_MULTI_IMAGE_MODELS:
+        runner_kwargs["edit_latent_attention_repeat_indices"] = [1]
+        runner_kwargs["edit_latent_attention_repeat"] = args.roi_attention_repeat
     image = spec.runner(**runner_kwargs)
     image.save(output_path)
     metadata = {
@@ -212,6 +215,12 @@ def generate_one(args: argparse.Namespace) -> None:
         "prompt": args.prompt,
         "negative_prompt": args.negative_prompt,
         "extra_edit_images": extra_edit_image_metadata,
+        "roi_attention_steering": {
+            "enabled": bool(args.use_roi_attention_steering and extra_edit_images and spec.name in QWEN_MULTI_IMAGE_MODELS),
+            "method": "repeat_roi_reference_edit_latents",
+            "repeat_indices": [1] if args.use_roi_attention_steering and extra_edit_images and spec.name in QWEN_MULTI_IMAGE_MODELS else [],
+            "repeat": args.roi_attention_repeat,
+        },
         "seed": args.seed,
         "height": args.height,
         "width": args.width,
@@ -338,6 +347,9 @@ def build_generate_command(args: argparse.Namespace, job: EvalJob, source_path: 
     ]
     if args.use_roi_reference:
         command.append("--use-roi-reference")
+    if args.use_roi_attention_steering:
+        command.append("--use-roi-attention-steering")
+        command.extend(["--roi-attention-repeat", str(args.roi_attention_repeat)])
     command.extend(["--roi-reference-box", args.roi_reference_box])
     command.extend(["--roi-reference-size", str(args.roi_reference_size)])
     if args.roi_reference_image:
@@ -573,6 +585,20 @@ def add_generation_args(parser: argparse.ArgumentParser, seed_required: bool = T
         "--use-roi-reference",
         action="store_true",
         help="For Qwen multi-image edit models, add a high-resolution label crop as an extra native image input.",
+    )
+    parser.add_argument(
+        "--use-roi-attention-steering",
+        action="store_true",
+        help=(
+            "For Qwen multi-image edit models, add the label ROI reference and repeat its edit latents in the DiT "
+            "image-token sequence to increase attention mass without spatial masks or training."
+        ),
+    )
+    parser.add_argument(
+        "--roi-attention-repeat",
+        type=int,
+        default=3,
+        help="How many total copies of the ROI reference edit latents to expose to DiT attention.",
     )
     parser.add_argument(
         "--roi-reference-image",
