@@ -23,10 +23,13 @@ import all_i2i_reference_to_target as base
 DEFAULT_DESIGN_SOURCE = "outputs/edit_pair_validation/amazon_lipcare_design/design_preview.png"
 DEFAULT_TARGET = "data/edit_pair_validation/amazon_lipcare/target.jpg"
 DEFAULT_OUTPUT_DIR = "outputs/edit_pair_validation/design_i2i_to_target"
+DEFAULT_PRODUCT_REFERENCE = "data/edit_pair_validation/amazon_lipcare/source.jpg"
 
 DESIGN_TO_TARGET_PROMPT = (
-    "Create the final photorealistic square ecommerce advertising poster, using the input image as a precise "
-    "publication design draft and layout blueprint. The intended result should match the Amazon target ad style: "
+    "Create the final photorealistic square ecommerce advertising poster. Use Picture 1 as the precise publication "
+    "design draft and layout blueprint. If additional pictures are provided, use Picture 2 as the exact high-resolution "
+    "package-label reference and any later picture as product-identity reference; do not treat them as extra products "
+    "to place in the scene. The intended result should match the Amazon target ad style: "
     "a clean white-background lip-care product poster with a yellow CNP Laboratory lip-care tube diagonally placed "
     "on the lower right, held by a small polished silver cosmetic applicator clip from the upper right, with glossy "
     "amber honey serum dripping into a small puddle at the bottom. Keep the left-side typography and copy from the "
@@ -36,6 +39,8 @@ DESIGN_TO_TARGET_PROMPT = (
     "into realistic studio product-ad elements. Preserve the existing yellow product tube from the design draft as "
     "the same product identity: do not change the tube shape, logo placement, brand text, label layout, or any visible "
     "small package text. Keep the product label readable and exactly as close as possible to the input design draft; "
+    "when a high-resolution label reference is provided, preserve that printed package text and logo geometry even more "
+    "strictly than the rough draft. "
     "do not invent, misspell, rewrite, replace, or redesign the package text. The design draft already contains the "
     "correct composition, product scale, product angle, and ad copy; refine it into a polished target-like product "
     "advertisement rather than creating a new design."
@@ -57,6 +62,14 @@ DESIGN_PRESERVE_ROIS = {
     "design_product_right": (0.46, 0.18, 0.89, 0.84),
     "design_tube_label": (0.58, 0.37, 0.78, 0.60),
     "design_vertical_brand": (0.50, 0.49, 0.66, 0.72),
+}
+
+QWEN_MULTI_IMAGE_MODELS = {
+    "qwen_image_edit_2509",
+    "qwen_image_edit_2511",
+    "qwen_image_edit_2511_lightning",
+    "firered_image_edit_1_0",
+    "firered_image_edit_1_1",
 }
 
 
@@ -82,6 +95,88 @@ def normalized_box(box: tuple[float, float, float, float], size: tuple[int, int]
     return base.normalized_box(box, size)
 
 
+def parse_box(value: str | None) -> tuple[float, float, float, float] | None:
+    if value is None:
+        return None
+    parts = [float(part.strip()) for part in value.split(",")]
+    if len(parts) != 4:
+        raise SystemExit(f"Expected box as left,top,right,bottom; got: {value}")
+    return tuple(parts)
+
+
+def crop_box(image: Image.Image, box: tuple[float, float, float, float] | None) -> Image.Image:
+    if box is None:
+        return image.copy()
+    pixel_box = normalized_box(box, image.size) if all(0.0 <= value <= 1.0 for value in box) else tuple(round(v) for v in box)
+    left, top, right, bottom = pixel_box
+    left = max(0, min(left, image.width - 1))
+    top = max(0, min(top, image.height - 1))
+    right = max(left + 1, min(right, image.width))
+    bottom = max(top + 1, min(bottom, image.height))
+    return image.crop((left, top, right, bottom))
+
+
+def prepare_roi_reference_images(
+    args: argparse.Namespace,
+    source: Image.Image,
+    output_dir: Path,
+    model_name: str,
+) -> tuple[list[Image.Image], list[dict]]:
+    if not args.use_roi_reference:
+        return [], []
+    if model_name not in QWEN_MULTI_IMAGE_MODELS:
+        return [], []
+
+    references: list[Image.Image] = []
+    metadata: list[dict] = []
+    reference_dir = output_dir / model_name / "reference_inputs"
+    reference_dir.mkdir(parents=True, exist_ok=True)
+
+    roi_source_path = Path(args.roi_reference_image) if args.roi_reference_image else None
+    roi_source = Image.open(roi_source_path).convert("RGB") if roi_source_path else source
+    roi_box = parse_box(args.roi_reference_box)
+    roi_crop = crop_box(roi_source, roi_box)
+    roi_crop = roi_crop.resize((args.roi_reference_size, args.roi_reference_size), Image.Resampling.LANCZOS)
+    roi_output_path = reference_dir / f"seed{args.seed}_label_roi.png"
+    roi_crop.save(roi_output_path)
+    references.append(roi_crop)
+    metadata.append(
+        {
+            "role": "high_resolution_label_reference",
+            "source": str(roi_source_path or args.source),
+            "box": args.roi_reference_box,
+            "image": str(roi_output_path),
+        }
+    )
+
+    if args.product_reference:
+        product_path = require_file(args.product_reference, "product reference image")
+        product_reference = Image.open(product_path).convert("RGB")
+        product_box = parse_box(args.product_reference_box)
+        product_reference = crop_box(product_reference, product_box)
+        if args.product_reference_size:
+            product_reference.thumbnail((args.product_reference_size, args.product_reference_size), Image.Resampling.LANCZOS)
+            canvas = Image.new("RGB", (args.product_reference_size, args.product_reference_size), "white")
+            canvas.paste(
+                product_reference,
+                ((canvas.width - product_reference.width) // 2, (canvas.height - product_reference.height) // 2),
+            )
+            product_reference = canvas
+        product_output_path = reference_dir / f"seed{args.seed}_product_reference.png"
+        product_reference.save(product_output_path)
+        references.append(product_reference)
+        metadata.append(
+            {
+                "role": "product_identity_reference",
+                "source": str(product_path),
+                "box": args.product_reference_box,
+                "image": str(product_output_path),
+            }
+        )
+
+    return references, metadata
+
+
 def generate_one(args: argparse.Namespace) -> None:
     spec = base.MODEL_MAP[args.model]
     source_path = require_file(args.source, "design source image")
@@ -92,19 +187,23 @@ def generate_one(args: argparse.Namespace) -> None:
     cfg_scale = args.cfg_scale if args.cfg_scale is not None else spec.default_cfg
     output_path = output_dir / f"seed{args.seed}.png"
     metadata_path = output_dir / f"seed{args.seed}.json"
-    image = spec.runner(
-        source=source,
-        prompt=args.prompt,
-        negative_prompt=args.negative_prompt,
-        seed=args.seed,
-        height=args.height,
-        width=args.width,
-        steps=steps,
-        cfg_scale=cfg_scale,
-        dtype=args.dtype,
-        device=args.device,
-        denoising_strength=args.denoising_strength,
-    )
+    extra_edit_images, extra_edit_image_metadata = prepare_roi_reference_images(args, source, Path(args.output_dir), spec.name)
+    runner_kwargs = {
+        "source": source,
+        "prompt": args.prompt,
+        "negative_prompt": args.negative_prompt,
+        "seed": args.seed,
+        "height": args.height,
+        "width": args.width,
+        "steps": steps,
+        "cfg_scale": cfg_scale,
+        "dtype": args.dtype,
+        "device": args.device,
+        "denoising_strength": args.denoising_strength,
+    }
+    if extra_edit_images:
+        runner_kwargs["extra_edit_images"] = extra_edit_images
+    image = spec.runner(**runner_kwargs)
     image.save(output_path)
     metadata = {
         "model": spec.name,
@@ -115,6 +214,7 @@ def generate_one(args: argparse.Namespace) -> None:
         "target_was_not_used_for_generation": True,
         "prompt": args.prompt,
         "negative_prompt": args.negative_prompt,
+        "extra_edit_images": extra_edit_image_metadata,
         "seed": args.seed,
         "height": args.height,
         "width": args.width,
@@ -239,6 +339,18 @@ def build_generate_command(args: argparse.Namespace, job: EvalJob, source_path: 
         "--negative-prompt",
         args.negative_prompt,
     ]
+    if args.use_roi_reference:
+        command.append("--use-roi-reference")
+    command.extend(["--roi-reference-box", args.roi_reference_box])
+    command.extend(["--roi-reference-size", str(args.roi_reference_size)])
+    if args.roi_reference_image:
+        command.extend(["--roi-reference-image", args.roi_reference_image])
+    if args.product_reference:
+        command.extend(["--product-reference", args.product_reference])
+    if args.product_reference_box:
+        command.extend(["--product-reference-box", args.product_reference_box])
+    if args.product_reference_size:
+        command.extend(["--product-reference-size", str(args.product_reference_size)])
     if args.num_inference_steps is not None:
         command.extend(["--num-inference-steps", str(args.num_inference_steps)])
     if args.cfg_scale is not None:
@@ -460,6 +572,33 @@ def add_generation_args(parser: argparse.ArgumentParser, seed_required: bool = T
     parser.add_argument("--dtype", choices=["bfloat16", "float16"], default="bfloat16")
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--denoising-strength", type=float, default=0.70)
+    parser.add_argument(
+        "--use-roi-reference",
+        action="store_true",
+        help="For Qwen multi-image edit models, add a high-resolution label crop as an extra native image input.",
+    )
+    parser.add_argument(
+        "--roi-reference-image",
+        default=None,
+        help="Image to crop the ROI reference from. Defaults to --source.",
+    )
+    parser.add_argument(
+        "--roi-reference-box",
+        default="0.58,0.37,0.78,0.60",
+        help="ROI crop box as normalized or pixel left,top,right,bottom. Defaults to design_tube_label.",
+    )
+    parser.add_argument("--roi-reference-size", type=int, default=1024)
+    parser.add_argument(
+        "--product-reference",
+        default=None,
+        help="Optional extra product identity reference image, passed after the label ROI for Qwen models.",
+    )
+    parser.add_argument(
+        "--product-reference-box",
+        default=None,
+        help="Optional crop box for --product-reference.",
+    )
+    parser.add_argument("--product-reference-size", type=int, default=1024)
     parser.add_argument(
         "--download-source",
         choices=["modelscope", "huggingface"],

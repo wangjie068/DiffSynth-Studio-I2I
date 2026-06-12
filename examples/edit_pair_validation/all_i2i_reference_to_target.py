@@ -273,6 +273,7 @@ def qwen_runner(
     zero_cond_t: bool = False,
     lightning: bool = False,
     denoising_strength: float | None = None,
+    extra_edit_images: list[Image.Image] | None = None,
 ):
     import torch
 
@@ -312,7 +313,12 @@ def qwen_runner(
         )
         pipe.load_lora(pipe.dit, lora, alpha=1)
         pipe.scheduler = FlowMatchScheduler("Qwen-Image-Lightning")
-    edit_image = [source] if use_list_input else source
+    if use_list_input:
+        edit_image = [source]
+        if extra_edit_images:
+            edit_image.extend(extra_edit_images)
+    else:
+        edit_image = source
     kwargs = {"zero_cond_t": zero_cond_t} if zero_cond_t else {}
     return pipe(
         prompt=prompt,
