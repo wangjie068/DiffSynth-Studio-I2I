@@ -285,6 +285,8 @@ def qwen_runner(
     edit_latent_ot_iters: int = 6,
     edit_latent_ot_block_start: int = 30,
     edit_latent_ot_block_interval: int = 5,
+    edit_latent_ot_mode: str = "replace",
+    edit_latent_ot_guide_box: tuple[float, float, float, float] | None = None,
 ):
     import torch
 
@@ -344,6 +346,8 @@ def qwen_runner(
         kwargs["edit_latent_ot_iters"] = edit_latent_ot_iters
         kwargs["edit_latent_ot_block_start"] = edit_latent_ot_block_start
         kwargs["edit_latent_ot_block_interval"] = edit_latent_ot_block_interval
+        kwargs["edit_latent_ot_mode"] = edit_latent_ot_mode
+        kwargs["edit_latent_ot_guide_box"] = edit_latent_ot_guide_box
     return pipe(
         prompt=prompt,
         negative_prompt=negative_prompt,

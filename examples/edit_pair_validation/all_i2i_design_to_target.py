@@ -213,6 +213,8 @@ def generate_one(args: argparse.Namespace) -> None:
         runner_kwargs["edit_latent_ot_iters"] = args.roi_ot_iters
         runner_kwargs["edit_latent_ot_block_start"] = args.roi_ot_block_start
         runner_kwargs["edit_latent_ot_block_interval"] = args.roi_ot_block_interval
+        runner_kwargs["edit_latent_ot_mode"] = args.roi_ot_mode
+        runner_kwargs["edit_latent_ot_guide_box"] = parse_box(args.roi_reference_box)
     image = spec.runner(**runner_kwargs)
     image.save(output_path)
     metadata = {
@@ -233,8 +235,10 @@ def generate_one(args: argparse.Namespace) -> None:
         },
         "roi_ot_steering": {
             "enabled": bool(args.use_roi_ot_steering and extra_edit_images and spec.name in QWEN_MULTI_IMAGE_MODELS),
-            "method": "source_guided_auto_target_sinkhorn_residual_injection",
+            "method": "source_guided_auto_target_sinkhorn_token_steering",
+            "mode": args.roi_ot_mode,
             "reference_indices": [1] if args.use_roi_ot_steering and extra_edit_images and spec.name in QWEN_MULTI_IMAGE_MODELS else [],
+            "guide_box": args.roi_reference_box,
             "alpha": args.roi_ot_alpha,
             "start_step": args.roi_ot_start_step,
             "target_tokens": args.roi_ot_target_tokens,
@@ -383,6 +387,7 @@ def build_generate_command(args: argparse.Namespace, job: EvalJob, source_path: 
         command.extend(["--roi-ot-iters", str(args.roi_ot_iters)])
         command.extend(["--roi-ot-block-start", str(args.roi_ot_block_start)])
         command.extend(["--roi-ot-block-interval", str(args.roi_ot_block_interval)])
+        command.extend(["--roi-ot-mode", args.roi_ot_mode])
     command.extend(["--roi-reference-box", args.roi_reference_box])
     command.extend(["--roi-reference-size", str(args.roi_reference_size)])
     if args.roi_reference_image:
@@ -655,6 +660,12 @@ def add_generation_args(parser: argparse.ArgumentParser, seed_required: bool = T
     parser.add_argument("--roi-ot-iters", type=int, default=6)
     parser.add_argument("--roi-ot-block-start", type=int, default=30)
     parser.add_argument("--roi-ot-block-interval", type=int, default=5)
+    parser.add_argument(
+        "--roi-ot-mode",
+        choices=["replace", "residual"],
+        default="replace",
+        help="replace moves target tokens toward transported reference tokens; residual only adds transported detail deltas.",
+    )
     parser.add_argument(
         "--roi-reference-image",
         default=None,

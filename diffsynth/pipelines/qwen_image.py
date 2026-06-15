@@ -141,6 +141,8 @@ class QwenImagePipeline(BasePipeline):
         edit_latent_ot_iters: int = 6,
         edit_latent_ot_block_start: int = 30,
         edit_latent_ot_block_interval: int = 5,
+        edit_latent_ot_mode: str = "replace",
+        edit_latent_ot_guide_box: tuple[float, float, float, float] = None,
         # Qwen-Image-Edit-2511
         zero_cond_t: bool = False,
         # Qwen-Image-Layered
@@ -187,6 +189,8 @@ class QwenImagePipeline(BasePipeline):
             "edit_latent_ot_iters": edit_latent_ot_iters,
             "edit_latent_ot_block_start": edit_latent_ot_block_start,
             "edit_latent_ot_block_interval": edit_latent_ot_block_interval,
+            "edit_latent_ot_mode": edit_latent_ot_mode,
+            "edit_latent_ot_guide_box": edit_latent_ot_guide_box,
             "context_image": context_image,
             "zero_cond_t": zero_cond_t,
             "layer_input_image": layer_input_image,
@@ -732,11 +736,36 @@ def sinkhorn_transport(similarity: torch.Tensor, temperature: float, iters: int)
     return transport / transport.sum(dim=-1, keepdim=True).clamp_min(1e-8)
 
 
+def normalized_box_token_indices(
+    box: tuple[float, float, float, float] | None,
+    sequence_length: int,
+    device: torch.device,
+) -> torch.Tensor | None:
+    if box is None:
+        return None
+    grid = int(round(math.sqrt(sequence_length)))
+    if grid * grid != sequence_length:
+        return None
+    left, top, right, bottom = box
+    if not all(0.0 <= value <= 1.0 for value in box):
+        return None
+    x0 = max(0, min(grid - 1, int(math.floor(left * grid))))
+    y0 = max(0, min(grid - 1, int(math.floor(top * grid))))
+    x1 = max(x0 + 1, min(grid, int(math.ceil(right * grid))))
+    y1 = max(y0 + 1, min(grid, int(math.ceil(bottom * grid))))
+    ys = torch.arange(y0, y1, device=device)
+    xs = torch.arange(x0, x1, device=device)
+    yy, xx = torch.meshgrid(ys, xs, indexing="ij")
+    return (yy.reshape(-1) * grid + xx.reshape(-1)).long()
+
+
 def ot_guided_reference_injection(
     image: torch.Tensor,
     target_slice: tuple[int, int],
     reference_slices: list[tuple[int, int]],
     guide_slice: tuple[int, int] | None,
+    guide_box: tuple[float, float, float, float] | None,
+    mode: str,
     alpha: float,
     target_tokens: int,
     source_tokens: int,
@@ -761,6 +790,7 @@ def ot_guided_reference_injection(
     source_len = references.shape[1]
     target_k = max(1, min(int(target_tokens), target_len))
     source_k = max(1, min(int(source_tokens), source_len))
+    guide_box_indices = normalized_box_token_indices(guide_box, target_len, target.device)
 
     output = image.clone()
     for batch_id in range(batch_size):
@@ -785,11 +815,19 @@ def ot_guided_reference_injection(
             guide_similarity_scores = (guide_norm @ source_norm.transpose(0, 1)).max(dim=-1).values
             guide_similarity_scores = (guide_similarity_scores - guide_similarity_scores.mean()) / guide_similarity_scores.std().clamp_min(1e-6)
             target_similarity_scores = (target_similarity_scores - target_similarity_scores.mean()) / target_similarity_scores.std().clamp_min(1e-6)
-            candidate_k = max(target_k, min(target_len, target_k * 4))
-            candidate_indices = torch.topk(guide_similarity_scores, k=candidate_k, largest=True).indices
+            if guide_box_indices is not None and guide_box_indices.numel() > 0:
+                candidate_indices = guide_box_indices
+                if candidate_indices.numel() > target_k * 4:
+                    guide_box_scores = guide_similarity_scores.index_select(0, candidate_indices)
+                    selected_guide = torch.topk(guide_box_scores, k=target_k * 4, largest=True).indices
+                    candidate_indices = candidate_indices.index_select(0, selected_guide)
+            else:
+                candidate_k = max(target_k, min(target_len, target_k * 4))
+                candidate_indices = torch.topk(guide_similarity_scores, k=candidate_k, largest=True).indices
+            target_k_local = min(target_k, candidate_indices.numel())
             candidate_scores = target_similarity_scores.index_select(0, candidate_indices)
             candidate_scores = candidate_scores + guide_similarity_scores.index_select(0, candidate_indices)
-            selected_candidate_indices = torch.topk(candidate_scores, k=target_k, largest=True).indices
+            selected_candidate_indices = torch.topk(candidate_scores, k=target_k_local, largest=True).indices
             target_indices = candidate_indices.index_select(0, selected_candidate_indices)
         else:
             target_detail = (target_fp32 - target_fp32.mean(dim=0, keepdim=True)).norm(dim=-1)
@@ -802,9 +840,13 @@ def ot_guided_reference_injection(
         target_selected_norm = F.normalize(target_selected, dim=-1)
         similarity = target_selected_norm @ source_norm.transpose(0, 1)
         transport = sinkhorn_transport(similarity, temperature=temperature, iters=sinkhorn_iters)
+        injected = transport @ source_selected
         injected_delta = transport @ source_delta_selected
 
-        target_updates = target_selected + float(alpha) * injected_delta
+        if mode == "replace":
+            target_updates = target_selected + float(alpha) * (injected - target_selected)
+        else:
+            target_updates = target_selected + float(alpha) * injected_delta
         output[batch_id, target_start + target_indices] = target_updates.to(dtype=output.dtype)
     return output
 
@@ -837,6 +879,8 @@ def model_fn_qwen_image(
     edit_latent_ot_iters=6,
     edit_latent_ot_block_start=30,
     edit_latent_ot_block_interval=5,
+    edit_latent_ot_mode="replace",
+    edit_latent_ot_guide_box=None,
     layer_input_latents=None,
     layer_num=None,
     context_latents=None,
@@ -954,6 +998,8 @@ def model_fn_qwen_image(
                     if 0 <= index < len(edit_latent_spans)
                 ],
                 guide_slice=edit_latent_spans[0] if edit_latent_spans else None,
+                guide_box=edit_latent_ot_guide_box,
+                mode=edit_latent_ot_mode,
                 alpha=edit_latent_ot_alpha,
                 target_tokens=edit_latent_ot_target_tokens,
                 source_tokens=edit_latent_ot_source_tokens,
