@@ -977,6 +977,8 @@ def model_fn_qwen_image(
         if 0 <= index < len(edit_latent_spans)
     ]
 
+    attention_ot_modes = {"attention_qkv", "attention_kv", "attention_v"}
+
     for block_id, block in enumerate(dit.transformer_blocks):
         ot_block_enabled = (
             ot_enabled
@@ -984,12 +986,13 @@ def model_fn_qwen_image(
             and (block_id - edit_latent_ot_block_start) % max(edit_latent_ot_block_interval, 1) == 0
         )
         attention_replacement_kwargs = None
-        if ot_block_enabled and edit_latent_ot_mode == "attention_qkv":
+        if ot_block_enabled and edit_latent_ot_mode in attention_ot_modes:
             attention_replacement_kwargs = {
                 "target_slice": (0, image_seq_len),
                 "reference_slices": ot_reference_slices,
                 "guide_slice": edit_latent_spans[0] if edit_latent_spans else None,
                 "guide_box": edit_latent_ot_guide_box,
+                "mode": edit_latent_ot_mode,
                 "alpha": edit_latent_ot_alpha,
                 "target_tokens": edit_latent_ot_target_tokens,
                 "source_tokens": edit_latent_ot_source_tokens,
@@ -1009,7 +1012,7 @@ def model_fn_qwen_image(
             modulate_index=modulate_index,
             attention_replacement_kwargs=attention_replacement_kwargs,
         )
-        if ot_block_enabled and edit_latent_ot_mode != "attention_qkv":
+        if ot_block_enabled and edit_latent_ot_mode not in attention_ot_modes:
             image = ot_guided_reference_injection(
                 image=image,
                 target_slice=(0, image_seq_len),

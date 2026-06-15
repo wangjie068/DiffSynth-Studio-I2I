@@ -86,6 +86,18 @@ class Flux2ImagePipeline(BasePipeline):
         # Edit
         edit_image: List[Image.Image] = None,
         edit_image_auto_resize: bool = True,
+        # Source-guided attention steering
+        edit_latent_ot_reference_indices: list[int] = None,
+        edit_latent_ot_alpha: float = 0.0,
+        edit_latent_ot_start_step: float = 0.6,
+        edit_latent_ot_target_tokens: int = 128,
+        edit_latent_ot_source_tokens: int = 256,
+        edit_latent_ot_temperature: float = 0.07,
+        edit_latent_ot_iters: int = 6,
+        edit_latent_ot_block_start: int = 30,
+        edit_latent_ot_block_interval: int = 5,
+        edit_latent_ot_mode: str = "attention_kv",
+        edit_latent_ot_guide_box: tuple[float, float, float, float] = None,
         # Shape
         height: int = 1024,
         width: int = 1024,
@@ -128,6 +140,17 @@ class Flux2ImagePipeline(BasePipeline):
             "cfg_scale": cfg_scale, "embedded_guidance": embedded_guidance,
             "input_image": input_image, "denoising_strength": denoising_strength,
             "edit_image": edit_image, "edit_image_auto_resize": edit_image_auto_resize,
+            "edit_latent_ot_reference_indices": edit_latent_ot_reference_indices,
+            "edit_latent_ot_alpha": edit_latent_ot_alpha,
+            "edit_latent_ot_start_step": edit_latent_ot_start_step,
+            "edit_latent_ot_target_tokens": edit_latent_ot_target_tokens,
+            "edit_latent_ot_source_tokens": edit_latent_ot_source_tokens,
+            "edit_latent_ot_temperature": edit_latent_ot_temperature,
+            "edit_latent_ot_iters": edit_latent_ot_iters,
+            "edit_latent_ot_block_start": edit_latent_ot_block_start,
+            "edit_latent_ot_block_interval": edit_latent_ot_block_interval,
+            "edit_latent_ot_mode": edit_latent_ot_mode,
+            "edit_latent_ot_guide_box": edit_latent_ot_guide_box,
             "height": height, "width": width,
             "seed": seed, "rand_device": rand_device, "initial_noise": initial_noise,
             "num_inference_steps": num_inference_steps,
@@ -491,7 +514,7 @@ class Flux2Unit_EditImageEmbedder(PipelineUnit):
     def __init__(self):
         super().__init__(
             input_params=("edit_image", "edit_image_auto_resize"),
-            output_params=("edit_latents", "edit_image_ids"),
+            output_params=("edit_latents", "edit_image_ids", "edit_latent_spans"),
             onload_model_names=("vae",)
         )
 
@@ -542,6 +565,8 @@ class Flux2Unit_EditImageEmbedder(PipelineUnit):
         if isinstance(edit_image, Image.Image):
             edit_image = [edit_image]
         resized_edit_image, edit_latents = [], []
+        edit_latent_spans = []
+        cursor = 0
         for image in edit_image:
             # Preprocess
             if edit_image_auto_resize is None or edit_image_auto_resize:
@@ -550,10 +575,13 @@ class Flux2Unit_EditImageEmbedder(PipelineUnit):
             # Encode
             image = pipe.preprocess_image(image)
             latents = pipe.vae.encode(image)
+            latent_len = latents.shape[2] * latents.shape[3]
+            edit_latent_spans.append((cursor, cursor + latent_len))
+            cursor += latent_len
             edit_latents.append(latents)
         edit_image_ids = self.process_image_ids(edit_latents).to(pipe.device)
         edit_latents = torch.concat([rearrange(latents, "B C H W -> B (H W) C") for latents in edit_latents], dim=1)
-        return {"edit_latents": edit_latents, "edit_image_ids": edit_image_ids}
+        return {"edit_latents": edit_latents, "edit_image_ids": edit_image_ids, "edit_latent_spans": edit_latent_spans}
 
 
 class Flux2Unit_ImageIDs(PipelineUnit):
@@ -612,17 +640,59 @@ def model_fn_flux2(
     image_ids=None,
     edit_latents=None,
     edit_image_ids=None,
+    edit_latent_spans=None,
     kv_cache=None,
     extra_text_embedding=None,
+    edit_latent_ot_reference_indices=None,
+    edit_latent_ot_alpha=0.0,
+    edit_latent_ot_start_step=0.6,
+    edit_latent_ot_target_tokens=128,
+    edit_latent_ot_source_tokens=256,
+    edit_latent_ot_temperature=0.07,
+    edit_latent_ot_iters=6,
+    edit_latent_ot_block_start=30,
+    edit_latent_ot_block_interval=5,
+    edit_latent_ot_mode="attention_kv",
+    edit_latent_ot_guide_box=None,
+    progress_id=0,
+    num_inference_steps=1,
     use_gradient_checkpointing=False,
     use_gradient_checkpointing_offload=False,
     **kwargs,
 ):
     image_seq_len = latents.shape[1]
+    source_guided_attention_kwargs = None
     if edit_latents is not None:
         image_seq_len = latents.shape[1]
         latents = torch.concat([latents, edit_latents], dim=1)
         image_ids = torch.concat([image_ids, edit_image_ids], dim=1)
+        edit_latent_spans = edit_latent_spans or []
+        edit_latent_spans = [(image_seq_len + start, image_seq_len + end) for start, end in edit_latent_spans]
+        reference_slices = [
+            edit_latent_spans[index]
+            for index in (edit_latent_ot_reference_indices or [])
+            if 0 <= index < len(edit_latent_spans)
+        ]
+        if (
+            edit_latent_ot_reference_indices is not None
+            and edit_latent_ot_alpha > 0
+            and reference_slices
+            and progress_id / max(num_inference_steps - 1, 1) >= edit_latent_ot_start_step
+        ):
+            source_guided_attention_kwargs = {
+                "target_slice": (0, image_seq_len),
+                "reference_slices": reference_slices,
+                "guide_slice": edit_latent_spans[0] if edit_latent_spans else None,
+                "guide_box": edit_latent_ot_guide_box,
+                "mode": edit_latent_ot_mode,
+                "alpha": edit_latent_ot_alpha,
+                "target_tokens": edit_latent_ot_target_tokens,
+                "source_tokens": edit_latent_ot_source_tokens,
+                "temperature": edit_latent_ot_temperature,
+                "sinkhorn_iters": edit_latent_ot_iters,
+                "block_start": edit_latent_ot_block_start,
+                "block_interval": edit_latent_ot_block_interval,
+            }
     embedded_guidance = torch.tensor([embedded_guidance], device=latents.device)
     if extra_text_embedding is not None:
         extra_text_ids = torch.zeros((1, extra_text_embedding.shape[1], 4), dtype=text_ids.dtype, device=text_ids.device)
@@ -637,6 +707,7 @@ def model_fn_flux2(
         txt_ids=text_ids,
         img_ids=image_ids,
         kv_cache=kv_cache,
+        source_guided_attention_kwargs=source_guided_attention_kwargs,
         use_gradient_checkpointing=use_gradient_checkpointing,
         use_gradient_checkpointing_offload=use_gradient_checkpointing_offload,
     )

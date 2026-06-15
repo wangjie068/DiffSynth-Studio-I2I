@@ -511,10 +511,15 @@ class QwenDoubleStreamAttention(nn.Module):
         enable_fp8_attention: bool = False,
         replacement_kwargs: Optional[dict] = None,
     ) -> Tuple[torch.FloatTensor, torch.FloatTensor]:
+        replacement_mode = "attention_qkv"
         replacement_image = image
         if replacement_kwargs is not None:
+            replacement_kwargs = replacement_kwargs.copy()
+            replacement_mode = replacement_kwargs.pop("mode", replacement_mode)
             replacement_image = source_guided_qkv_replacement(image=image, **replacement_kwargs)
-        img_q, img_k, img_v = self.to_q(replacement_image), self.to_k(replacement_image), self.to_v(replacement_image)
+        img_q = self.to_q(replacement_image if replacement_mode == "attention_qkv" else image)
+        img_k = self.to_k(replacement_image if replacement_mode in ("attention_qkv", "attention_kv") else image)
+        img_v = self.to_v(replacement_image if replacement_mode in ("attention_qkv", "attention_kv", "attention_v") else image)
         txt_q, txt_k, txt_v = self.add_q_proj(text), self.add_k_proj(text), self.add_v_proj(text)
         seq_txt = txt_q.shape[1]
 

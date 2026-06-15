@@ -1,5 +1,6 @@
 import torch
 from .general_modules import TimestepEmbeddings, AdaLayerNorm, RMSNorm
+from .qwen_image_dit import source_guided_qkv_replacement
 from einops import rearrange
 
 
@@ -69,13 +70,32 @@ class FluxJointAttention(torch.nn.Module):
         xk_out = freqs_cis[..., 0] * xk_[..., 0] + freqs_cis[..., 1] * xk_[..., 1]
         return xq_out.reshape(*xq.shape).type_as(xq), xk_out.reshape(*xk.shape).type_as(xk)
 
-    def forward(self, hidden_states_a, hidden_states_b, image_rotary_emb, attn_mask=None, ipadapter_kwargs_list=None):
+    def forward(
+        self,
+        hidden_states_a,
+        hidden_states_b,
+        image_rotary_emb,
+        attn_mask=None,
+        ipadapter_kwargs_list=None,
+        source_guided_attention_kwargs=None,
+    ):
         batch_size = hidden_states_a.shape[0]
 
         # Part A
-        qkv_a = self.a_to_qkv(hidden_states_a)
-        qkv_a = qkv_a.view(batch_size, -1, 3 * self.num_heads, self.head_dim).transpose(1, 2)
+        qkv_a = self.a_to_qkv(hidden_states_a).view(batch_size, -1, 3 * self.num_heads, self.head_dim).transpose(1, 2)
         q_a, k_a, v_a = qkv_a.chunk(3, dim=1)
+        if source_guided_attention_kwargs is not None:
+            replacement_kwargs = source_guided_attention_kwargs.copy()
+            replacement_mode = replacement_kwargs.pop("mode", "attention_kv")
+            replacement_a = source_guided_qkv_replacement(image=hidden_states_a, **replacement_kwargs)
+            qkv_replacement_a = self.a_to_qkv(replacement_a).view(batch_size, -1, 3 * self.num_heads, self.head_dim).transpose(1, 2)
+            q_replacement_a, k_replacement_a, v_replacement_a = qkv_replacement_a.chunk(3, dim=1)
+            if replacement_mode == "attention_qkv":
+                q_a = q_replacement_a
+            if replacement_mode in ("attention_qkv", "attention_kv"):
+                k_a = k_replacement_a
+            if replacement_mode in ("attention_qkv", "attention_kv", "attention_v"):
+                v_a = v_replacement_a
         q_a, k_a = self.norm_q_a(q_a), self.norm_k_a(k_a)
 
         # Part B
@@ -128,12 +148,28 @@ class FluxJointTransformerBlock(torch.nn.Module):
         )
 
 
-    def forward(self, hidden_states_a, hidden_states_b, temb, image_rotary_emb, attn_mask=None, ipadapter_kwargs_list=None):
+    def forward(
+        self,
+        hidden_states_a,
+        hidden_states_b,
+        temb,
+        image_rotary_emb,
+        attn_mask=None,
+        ipadapter_kwargs_list=None,
+        source_guided_attention_kwargs=None,
+    ):
         norm_hidden_states_a, gate_msa_a, shift_mlp_a, scale_mlp_a, gate_mlp_a = self.norm1_a(hidden_states_a, emb=temb)
         norm_hidden_states_b, gate_msa_b, shift_mlp_b, scale_mlp_b, gate_mlp_b = self.norm1_b(hidden_states_b, emb=temb)
 
         # Attention
-        attn_output_a, attn_output_b = self.attn(norm_hidden_states_a, norm_hidden_states_b, image_rotary_emb, attn_mask, ipadapter_kwargs_list)
+        attn_output_a, attn_output_b = self.attn(
+            norm_hidden_states_a,
+            norm_hidden_states_b,
+            image_rotary_emb,
+            attn_mask,
+            ipadapter_kwargs_list,
+            source_guided_attention_kwargs=source_guided_attention_kwargs,
+        )
 
         # Part A
         hidden_states_a = hidden_states_a + gate_msa_a * attn_output_a
@@ -225,11 +261,20 @@ class FluxSingleTransformerBlock(torch.nn.Module):
         return xq_out.reshape(*xq.shape).type_as(xq), xk_out.reshape(*xk.shape).type_as(xk)
 
 
-    def process_attention(self, hidden_states, image_rotary_emb, attn_mask=None, ipadapter_kwargs_list=None):
+    def process_attention(self, hidden_states, image_rotary_emb, attn_mask=None, ipadapter_kwargs_list=None, replacement_hidden_states=None, replacement_mode="attention_kv"):
         batch_size = hidden_states.shape[0]
 
         qkv = hidden_states.view(batch_size, -1, 3 * self.num_heads, self.head_dim).transpose(1, 2)
         q, k, v = qkv.chunk(3, dim=1)
+        if replacement_hidden_states is not None:
+            replacement_qkv = replacement_hidden_states.view(batch_size, -1, 3 * self.num_heads, self.head_dim).transpose(1, 2)
+            replacement_q, replacement_k, replacement_v = replacement_qkv.chunk(3, dim=1)
+            if replacement_mode == "attention_qkv":
+                q = replacement_q
+            if replacement_mode in ("attention_qkv", "attention_kv"):
+                k = replacement_k
+            if replacement_mode in ("attention_qkv", "attention_kv", "attention_v"):
+                v = replacement_v
         q, k = self.norm_q_a(q), self.norm_k_a(k)
 
         q, k = self.apply_rope(q, k, image_rotary_emb)
@@ -242,13 +287,38 @@ class FluxSingleTransformerBlock(torch.nn.Module):
         return hidden_states
 
 
-    def forward(self, hidden_states_a, hidden_states_b, temb, image_rotary_emb, attn_mask=None, ipadapter_kwargs_list=None):
+    def forward(
+        self,
+        hidden_states_a,
+        hidden_states_b,
+        temb,
+        image_rotary_emb,
+        attn_mask=None,
+        ipadapter_kwargs_list=None,
+        source_guided_attention_kwargs=None,
+    ):
         residual = hidden_states_a
         norm_hidden_states, gate = self.norm(hidden_states_a, emb=temb)
-        hidden_states_a = self.to_qkv_mlp(norm_hidden_states)
-        attn_output, mlp_hidden_states = hidden_states_a[:, :, :self.dim * 3], hidden_states_a[:, :, self.dim * 3:]
+        projected_states = self.to_qkv_mlp(norm_hidden_states)
+        attn_output, mlp_hidden_states = projected_states[:, :, :self.dim * 3], projected_states[:, :, self.dim * 3:]
 
-        attn_output = self.process_attention(attn_output, image_rotary_emb, attn_mask, ipadapter_kwargs_list)
+        replacement_attn_output = None
+        replacement_mode = "attention_kv"
+        if source_guided_attention_kwargs is not None:
+            replacement_kwargs = source_guided_attention_kwargs.copy()
+            replacement_mode = replacement_kwargs.pop("mode", replacement_mode)
+            replacement_norm_hidden_states = source_guided_qkv_replacement(image=norm_hidden_states, **replacement_kwargs)
+            replacement_projected_states = self.to_qkv_mlp(replacement_norm_hidden_states)
+            replacement_attn_output = replacement_projected_states[:, :, :self.dim * 3]
+
+        attn_output = self.process_attention(
+            attn_output,
+            image_rotary_emb,
+            attn_mask,
+            ipadapter_kwargs_list,
+            replacement_hidden_states=replacement_attn_output,
+            replacement_mode=replacement_mode,
+        )
         mlp_hidden_states = torch.nn.functional.gelu(mlp_hidden_states, approximate="tanh")
 
         hidden_states_a = torch.cat([attn_output, mlp_hidden_states], dim=2)

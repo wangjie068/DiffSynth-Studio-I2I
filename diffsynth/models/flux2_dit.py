@@ -7,6 +7,7 @@ import torch.nn.functional as F
 import numpy as np
 from ..core.attention import attention_forward
 from ..core.gradient import gradient_checkpoint_forward
+from .qwen_image_dit import source_guided_qkv_replacement
 
 
 def get_timestep_embedding(
@@ -322,6 +323,24 @@ def _get_qkv_projections(attn: "Flux2Attention", hidden_states, encoder_hidden_s
     return _get_projections(attn, hidden_states, encoder_hidden_states)
 
 
+def _replace_flux2_image_projections(attn, hidden_states, query, key, value, source_guided_attention_kwargs):
+    if source_guided_attention_kwargs is None:
+        return query, key, value
+    replacement_kwargs = source_guided_attention_kwargs.copy()
+    replacement_mode = replacement_kwargs.pop("mode", "attention_kv")
+    replacement_hidden_states = source_guided_qkv_replacement(image=hidden_states, **replacement_kwargs)
+    replacement_query = attn.to_q(replacement_hidden_states)
+    replacement_key = attn.to_k(replacement_hidden_states)
+    replacement_value = attn.to_v(replacement_hidden_states)
+    if replacement_mode == "attention_qkv":
+        query = replacement_query
+    if replacement_mode in ("attention_qkv", "attention_kv"):
+        key = replacement_key
+    if replacement_mode in ("attention_qkv", "attention_kv", "attention_v"):
+        value = replacement_value
+    return query, key, value
+
+
 class Flux2SwiGLU(nn.Module):
     """
     Flux 2 uses a SwiGLU-style activation in the transformer feedforward sub-blocks, but with the linear projection
@@ -420,10 +439,14 @@ class Flux2Attention(torch.nn.Module):
         attention_mask: Optional[torch.Tensor] = None,
         image_rotary_emb: Optional[torch.Tensor] = None,
         kv_cache = None,
+        source_guided_attention_kwargs=None,
         **kwargs,
     ) -> torch.Tensor:
         query, key, value, encoder_query, encoder_key, encoder_value = _get_qkv_projections(
             self, hidden_states, encoder_hidden_states
+        )
+        query, key, value = _replace_flux2_image_projections(
+            self, hidden_states, query, key, value, source_guided_attention_kwargs
         )
 
         query = query.unflatten(-1, (self.heads, -1))
@@ -526,9 +549,11 @@ class Flux2ParallelSelfAttention(torch.nn.Module):
         attention_mask: Optional[torch.Tensor] = None,
         image_rotary_emb: Optional[torch.Tensor] = None,
         kv_cache = None,
+        source_guided_attention_kwargs=None,
         **kwargs,
     ) -> torch.Tensor:
         # Parallel in (QKV + MLP in) projection
+        input_hidden_states = hidden_states
         hidden_states = self.to_qkv_mlp_proj(hidden_states)
         qkv, mlp_hidden_states = torch.split(
             hidden_states, [3 * self.inner_dim, self.mlp_hidden_dim * self.mlp_mult_factor], dim=-1
@@ -536,6 +561,23 @@ class Flux2ParallelSelfAttention(torch.nn.Module):
 
         # Handle the attention logic
         query, key, value = qkv.chunk(3, dim=-1)
+        if source_guided_attention_kwargs is not None:
+            replacement_kwargs = source_guided_attention_kwargs.copy()
+            replacement_mode = replacement_kwargs.pop("mode", "attention_kv")
+            replacement_hidden_states = source_guided_qkv_replacement(image=input_hidden_states, **replacement_kwargs)
+            replacement_projected_states = self.to_qkv_mlp_proj(replacement_hidden_states)
+            replacement_qkv, _ = torch.split(
+                replacement_projected_states,
+                [3 * self.inner_dim, self.mlp_hidden_dim * self.mlp_mult_factor],
+                dim=-1,
+            )
+            replacement_query, replacement_key, replacement_value = replacement_qkv.chunk(3, dim=-1)
+            if replacement_mode == "attention_qkv":
+                query = replacement_query
+            if replacement_mode in ("attention_qkv", "attention_kv"):
+                key = replacement_key
+            if replacement_mode in ("attention_qkv", "attention_kv", "attention_v"):
+                value = replacement_value
 
         query = query.unflatten(-1, (self.heads, -1))
         key = key.unflatten(-1, (self.heads, -1))
@@ -914,6 +956,7 @@ class Flux2DiT(torch.nn.Module):
         txt_ids: torch.Tensor = None,
         guidance: torch.Tensor = None,
         joint_attention_kwargs: Optional[Dict[str, Any]] = None,
+        source_guided_attention_kwargs: Optional[Dict[str, Any]] = None,
         kv_cache = None,
         use_gradient_checkpointing=False,
         use_gradient_checkpointing_offload=False,
@@ -960,6 +1003,19 @@ class Flux2DiT(torch.nn.Module):
 
         # 4. Double Stream Transformer Blocks
         for block_id, block in enumerate(self.transformer_blocks):
+            block_source_guided_attention_kwargs = None
+            if source_guided_attention_kwargs is not None:
+                block_start = source_guided_attention_kwargs.get("block_start", 0)
+                block_interval = max(source_guided_attention_kwargs.get("block_interval", 1), 1)
+                if block_id >= block_start and (block_id - block_start) % block_interval == 0:
+                    block_source_guided_attention_kwargs = {
+                        key: value
+                        for key, value in source_guided_attention_kwargs.items()
+                        if key not in ("block_start", "block_interval")
+                    }
+            block_joint_attention_kwargs = (joint_attention_kwargs or {}).copy()
+            if block_source_guided_attention_kwargs is not None:
+                block_joint_attention_kwargs["source_guided_attention_kwargs"] = block_source_guided_attention_kwargs
             encoder_hidden_states, hidden_states = gradient_checkpoint_forward(
                 block,
                 use_gradient_checkpointing=use_gradient_checkpointing,
@@ -969,7 +1025,7 @@ class Flux2DiT(torch.nn.Module):
                 temb_mod_params_img=double_stream_mod_img,
                 temb_mod_params_txt=double_stream_mod_txt,
                 image_rotary_emb=concat_rotary_emb,
-                joint_attention_kwargs=joint_attention_kwargs,
+                joint_attention_kwargs=block_joint_attention_kwargs,
                 kv_cache=None if kv_cache is None else kv_cache.get(f"double_{block_id}"),
             )
         # Concatenate text and image streams for single-block inference
@@ -977,6 +1033,33 @@ class Flux2DiT(torch.nn.Module):
 
         # 5. Single Stream Transformer Blocks
         for block_id, block in enumerate(self.single_transformer_blocks):
+            global_block_id = block_id + len(self.transformer_blocks)
+            block_source_guided_attention_kwargs = None
+            if source_guided_attention_kwargs is not None:
+                block_start = source_guided_attention_kwargs.get("block_start", 0)
+                block_interval = max(source_guided_attention_kwargs.get("block_interval", 1), 1)
+                if global_block_id >= block_start and (global_block_id - block_start) % block_interval == 0:
+                    text_offset = num_txt_tokens
+                    block_source_guided_attention_kwargs = {
+                        key: value
+                        for key, value in source_guided_attention_kwargs.items()
+                        if key not in ("block_start", "block_interval")
+                    }
+                    target_start, target_end = block_source_guided_attention_kwargs["target_slice"]
+                    block_source_guided_attention_kwargs["target_slice"] = (text_offset + target_start, text_offset + target_end)
+                    block_source_guided_attention_kwargs["reference_slices"] = [
+                        (text_offset + start, text_offset + end)
+                        for start, end in block_source_guided_attention_kwargs["reference_slices"]
+                    ]
+                    guide_slice = block_source_guided_attention_kwargs.get("guide_slice")
+                    if guide_slice is not None:
+                        block_source_guided_attention_kwargs["guide_slice"] = (
+                            text_offset + guide_slice[0],
+                            text_offset + guide_slice[1],
+                        )
+            block_joint_attention_kwargs = (joint_attention_kwargs or {}).copy()
+            if block_source_guided_attention_kwargs is not None:
+                block_joint_attention_kwargs["source_guided_attention_kwargs"] = block_source_guided_attention_kwargs
             hidden_states = gradient_checkpoint_forward(
                 block,
                 use_gradient_checkpointing=use_gradient_checkpointing,
@@ -985,7 +1068,7 @@ class Flux2DiT(torch.nn.Module):
                 encoder_hidden_states=None,
                 temb_mod_params=single_stream_mod,
                 image_rotary_emb=concat_rotary_emb,
-                joint_attention_kwargs=joint_attention_kwargs,
+                joint_attention_kwargs=block_joint_attention_kwargs,
                 kv_cache=None if kv_cache is None else kv_cache.get(f"single_{block_id}"),
             )
         # Remove text tokens from concatenated stream

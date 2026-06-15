@@ -201,6 +201,18 @@ class FluxImagePipeline(BasePipeline):
         num_inference_steps: int = 30,
         # Kontext
         kontext_images: Union[list[Image.Image], Image.Image] = None,
+        # Source-guided attention steering
+        edit_latent_ot_reference_indices: list[int] = None,
+        edit_latent_ot_alpha: float = 0.0,
+        edit_latent_ot_start_step: float = 0.6,
+        edit_latent_ot_target_tokens: int = 128,
+        edit_latent_ot_source_tokens: int = 256,
+        edit_latent_ot_temperature: float = 0.07,
+        edit_latent_ot_iters: int = 6,
+        edit_latent_ot_block_start: int = 30,
+        edit_latent_ot_block_interval: int = 5,
+        edit_latent_ot_mode: str = "attention_kv",
+        edit_latent_ot_guide_box: tuple[float, float, float, float] = None,
         # ControlNet
         controlnet_inputs: list[ControlNetInput] = None,
         # IP-Adapter
@@ -254,6 +266,17 @@ class FluxImagePipeline(BasePipeline):
             "seed": seed, "rand_device": rand_device,
             "sigma_shift": sigma_shift, "num_inference_steps": num_inference_steps,
             "kontext_images": kontext_images,
+            "edit_latent_ot_reference_indices": edit_latent_ot_reference_indices,
+            "edit_latent_ot_alpha": edit_latent_ot_alpha,
+            "edit_latent_ot_start_step": edit_latent_ot_start_step,
+            "edit_latent_ot_target_tokens": edit_latent_ot_target_tokens,
+            "edit_latent_ot_source_tokens": edit_latent_ot_source_tokens,
+            "edit_latent_ot_temperature": edit_latent_ot_temperature,
+            "edit_latent_ot_iters": edit_latent_ot_iters,
+            "edit_latent_ot_block_start": edit_latent_ot_block_start,
+            "edit_latent_ot_block_interval": edit_latent_ot_block_interval,
+            "edit_latent_ot_mode": edit_latent_ot_mode,
+            "edit_latent_ot_guide_box": edit_latent_ot_guide_box,
             "controlnet_inputs": controlnet_inputs,
             "ipadapter_images": ipadapter_images, "ipadapter_scale": ipadapter_scale,
             "eligen_entity_prompts": eligen_entity_prompts, "eligen_entity_masks": eligen_entity_masks, "eligen_enable_on_negative": eligen_enable_on_negative, "eligen_enable_inpaint": eligen_enable_inpaint,
@@ -418,7 +441,7 @@ class FluxImageUnit_Kontext(PipelineUnit):
     def __init__(self):
         super().__init__(
             input_params=("kontext_images", "tiled", "tile_size", "tile_stride"),
-            output_params=("kontext_latents", "kontext_image_ids"),
+            output_params=("kontext_latents", "kontext_image_ids", "kontext_latent_spans"),
             onload_model_names=("vae_encoder",)
         )
 
@@ -430,6 +453,8 @@ class FluxImageUnit_Kontext(PipelineUnit):
             
         kontext_latents = []
         kontext_image_ids = []
+        kontext_latent_spans = []
+        cursor = 0
         for kontext_image in kontext_images:
             kontext_image = pipe.preprocess_image(kontext_image)
             kontext_latent = pipe.vae_encoder(kontext_image, tiled=tiled, tile_size=tile_size, tile_stride=tile_stride)
@@ -437,10 +462,12 @@ class FluxImageUnit_Kontext(PipelineUnit):
             image_ids[..., 0] = 1
             kontext_image_ids.append(image_ids)
             kontext_latent = pipe.dit.patchify(kontext_latent)
+            kontext_latent_spans.append((cursor, cursor + kontext_latent.shape[1]))
+            cursor += kontext_latent.shape[1]
             kontext_latents.append(kontext_latent)
         kontext_latents = torch.concat(kontext_latents, dim=1)
         kontext_image_ids = torch.concat(kontext_image_ids, dim=-2)
-        return {"kontext_latents": kontext_latents, "kontext_image_ids": kontext_image_ids}
+        return {"kontext_latents": kontext_latents, "kontext_image_ids": kontext_image_ids, "kontext_latent_spans": kontext_latent_spans}
 
 
 
@@ -1010,6 +1037,7 @@ def model_fn_flux_image(
     image_ids=None,
     kontext_latents=None,
     kontext_image_ids=None,
+    kontext_latent_spans=None,
     controlnet_inputs=None,
     controlnet_conditionings=None,
     tiled=False,
@@ -1029,6 +1057,17 @@ def model_fn_flux_image(
     tea_cache: TeaCache = None,
     progress_id=0,
     num_inference_steps=1,
+    edit_latent_ot_reference_indices=None,
+    edit_latent_ot_alpha=0.0,
+    edit_latent_ot_start_step=0.6,
+    edit_latent_ot_target_tokens=128,
+    edit_latent_ot_source_tokens=256,
+    edit_latent_ot_temperature=0.07,
+    edit_latent_ot_iters=6,
+    edit_latent_ot_block_start=30,
+    edit_latent_ot_block_interval=5,
+    edit_latent_ot_mode="attention_kv",
+    edit_latent_ot_guide_box=None,
     use_gradient_checkpointing=False,
     use_gradient_checkpointing_offload=False,
     **kwargs
@@ -1122,6 +1161,20 @@ def model_fn_flux_image(
         hidden_states = torch.concat([hidden_states, step1x_reference_latents], dim=1)
         
     hidden_states = dit.x_embedder(hidden_states)
+    image_seq_len = height // 2 * width // 2
+    kontext_latent_spans = kontext_latent_spans or []
+    source_guided_spans = [(image_seq_len + start, image_seq_len + end) for start, end in kontext_latent_spans]
+    source_guided_reference_slices = [
+        source_guided_spans[index]
+        for index in (edit_latent_ot_reference_indices or [])
+        if 0 <= index < len(source_guided_spans)
+    ]
+    source_guided_enabled = (
+        edit_latent_ot_reference_indices is not None
+        and edit_latent_ot_alpha > 0
+        and source_guided_reference_slices
+        and progress_id / max(num_inference_steps - 1, 1) >= edit_latent_ot_start_step
+    )
 
     # EliGen
     if entity_prompt_emb is not None and entity_masks is not None:
@@ -1142,6 +1195,24 @@ def model_fn_flux_image(
     else:
         # Joint Blocks
         for block_id, block in enumerate(dit.blocks):
+            source_guided_attention_kwargs = None
+            if (
+                source_guided_enabled
+                and block_id >= edit_latent_ot_block_start
+                and (block_id - edit_latent_ot_block_start) % max(edit_latent_ot_block_interval, 1) == 0
+            ):
+                source_guided_attention_kwargs = {
+                    "target_slice": (0, image_seq_len),
+                    "reference_slices": source_guided_reference_slices,
+                    "guide_slice": source_guided_spans[0] if source_guided_spans else None,
+                    "guide_box": edit_latent_ot_guide_box,
+                    "mode": edit_latent_ot_mode,
+                    "alpha": edit_latent_ot_alpha,
+                    "target_tokens": edit_latent_ot_target_tokens,
+                    "source_tokens": edit_latent_ot_source_tokens,
+                    "temperature": edit_latent_ot_temperature,
+                    "sinkhorn_iters": edit_latent_ot_iters,
+                }
             hidden_states, prompt_emb = gradient_checkpoint_forward(
                 block,
                 use_gradient_checkpointing,
@@ -1152,6 +1223,7 @@ def model_fn_flux_image(
                 image_rotary_emb,
                 attention_mask,
                 ipadapter_kwargs_list=ipadapter_kwargs_list.get(block_id, None),
+                source_guided_attention_kwargs=source_guided_attention_kwargs,
             )
             # ControlNet
             if controlnet is not None and controlnet_conditionings is not None and controlnet_res_stack is not None:
@@ -1163,7 +1235,26 @@ def model_fn_flux_image(
         # Single Blocks
         hidden_states = torch.cat([prompt_emb, hidden_states], dim=1)
         num_joint_blocks = len(dit.blocks)
+        text_seq_len = prompt_emb.shape[1]
         for block_id, block in enumerate(dit.single_blocks):
+            source_guided_attention_kwargs = None
+            if (
+                source_guided_enabled
+                and block_id + num_joint_blocks >= edit_latent_ot_block_start
+                and (block_id + num_joint_blocks - edit_latent_ot_block_start) % max(edit_latent_ot_block_interval, 1) == 0
+            ):
+                source_guided_attention_kwargs = {
+                    "target_slice": (text_seq_len, text_seq_len + image_seq_len),
+                    "reference_slices": [(text_seq_len + start, text_seq_len + end) for start, end in source_guided_reference_slices],
+                    "guide_slice": (text_seq_len + source_guided_spans[0][0], text_seq_len + source_guided_spans[0][1]) if source_guided_spans else None,
+                    "guide_box": edit_latent_ot_guide_box,
+                    "mode": edit_latent_ot_mode,
+                    "alpha": edit_latent_ot_alpha,
+                    "target_tokens": edit_latent_ot_target_tokens,
+                    "source_tokens": edit_latent_ot_source_tokens,
+                    "temperature": edit_latent_ot_temperature,
+                    "sinkhorn_iters": edit_latent_ot_iters,
+                }
             hidden_states, prompt_emb = gradient_checkpoint_forward(
                 block,
                 use_gradient_checkpointing,
@@ -1174,6 +1265,7 @@ def model_fn_flux_image(
                 image_rotary_emb,
                 attention_mask,
                 ipadapter_kwargs_list=ipadapter_kwargs_list.get(block_id + num_joint_blocks, None),
+                source_guided_attention_kwargs=source_guided_attention_kwargs,
             )
             # ControlNet
             if controlnet is not None and controlnet_conditionings is not None and controlnet_single_res_stack is not None:

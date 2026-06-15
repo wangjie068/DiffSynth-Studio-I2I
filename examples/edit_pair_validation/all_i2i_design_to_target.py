@@ -69,6 +69,18 @@ QWEN_MULTI_IMAGE_MODELS = {
     "firered_image_edit_1_1",
 }
 
+FLUX_SOURCE_GUIDED_MODELS = {
+    "flux1_kontext_dev",
+    "flux2_dev",
+    "flux2_klein_base_4b",
+    "flux2_klein_4b",
+    "flux2_klein_base_9b",
+    "flux2_klein_9b",
+    "flux2_template_edit_4b",
+}
+
+SOURCE_GUIDED_MULTI_IMAGE_MODELS = QWEN_MULTI_IMAGE_MODELS | FLUX_SOURCE_GUIDED_MODELS
+
 
 @dataclass(frozen=True)
 class EvalJob:
@@ -121,7 +133,7 @@ def prepare_roi_reference_images(
 ) -> tuple[list[Image.Image], list[dict]]:
     if not args.use_roi_reference and not args.use_roi_attention_steering and not args.use_roi_ot_steering:
         return [], []
-    if model_name not in QWEN_MULTI_IMAGE_MODELS:
+    if model_name not in SOURCE_GUIDED_MULTI_IMAGE_MODELS:
         return [], []
 
     references: list[Image.Image] = []
@@ -203,7 +215,7 @@ def generate_one(args: argparse.Namespace) -> None:
     if args.use_roi_attention_steering and extra_edit_images and spec.name in QWEN_MULTI_IMAGE_MODELS:
         runner_kwargs["edit_latent_attention_repeat_indices"] = [1]
         runner_kwargs["edit_latent_attention_repeat"] = args.roi_attention_repeat
-    if args.use_roi_ot_steering and extra_edit_images and spec.name in QWEN_MULTI_IMAGE_MODELS:
+    if args.use_roi_ot_steering and extra_edit_images and spec.name in SOURCE_GUIDED_MULTI_IMAGE_MODELS:
         runner_kwargs["edit_latent_ot_reference_indices"] = [1]
         runner_kwargs["edit_latent_ot_alpha"] = args.roi_ot_alpha
         runner_kwargs["edit_latent_ot_start_step"] = args.roi_ot_start_step
@@ -234,10 +246,10 @@ def generate_one(args: argparse.Namespace) -> None:
             "repeat": args.roi_attention_repeat,
         },
         "roi_ot_steering": {
-            "enabled": bool(args.use_roi_ot_steering and extra_edit_images and spec.name in QWEN_MULTI_IMAGE_MODELS),
+            "enabled": bool(args.use_roi_ot_steering and extra_edit_images and spec.name in SOURCE_GUIDED_MULTI_IMAGE_MODELS),
             "method": "source_guided_auto_target_sinkhorn_token_steering",
             "mode": args.roi_ot_mode,
-            "reference_indices": [1] if args.use_roi_ot_steering and extra_edit_images and spec.name in QWEN_MULTI_IMAGE_MODELS else [],
+            "reference_indices": [1] if args.use_roi_ot_steering and extra_edit_images and spec.name in SOURCE_GUIDED_MULTI_IMAGE_MODELS else [],
             "guide_box": args.roi_reference_box,
             "alpha": args.roi_ot_alpha,
             "start_step": args.roi_ot_start_step,
@@ -622,7 +634,7 @@ def add_generation_args(parser: argparse.ArgumentParser, seed_required: bool = T
     parser.add_argument(
         "--use-roi-reference",
         action="store_true",
-        help="For Qwen multi-image edit models, add a high-resolution label crop as an extra native image input.",
+        help="For Qwen/Flux multi-image edit models, add a high-resolution label crop as an extra native image input.",
     )
     parser.add_argument(
         "--use-roi-attention-steering",
@@ -642,7 +654,7 @@ def add_generation_args(parser: argparse.ArgumentParser, seed_required: bool = T
         "--use-roi-ot-steering",
         action="store_true",
         help=(
-            "For Qwen multi-image edit models, add the label ROI reference and use Sinkhorn/OT to automatically "
+            "For Qwen/Flux multi-image edit models, add the label ROI reference and use Sinkhorn/OT to automatically "
             "inject or replace its details in similar target tokens. Source-design tokens guide automatic "
             "localization; no target mask is required."
         ),
@@ -662,11 +674,12 @@ def add_generation_args(parser: argparse.ArgumentParser, seed_required: bool = T
     parser.add_argument("--roi-ot-block-interval", type=int, default=5)
     parser.add_argument(
         "--roi-ot-mode",
-        choices=["replace", "residual", "attention_qkv"],
+        choices=["replace", "residual", "attention_qkv", "attention_kv", "attention_v"],
         default="replace",
         help=(
             "replace moves target hidden tokens toward transported reference tokens; residual only adds transported "
-            "detail deltas; attention_qkv performs source-guided replacement before Qwen attention Q/K/V projection."
+            "detail deltas; attention_qkv, attention_kv, and attention_v perform source-guided replacement before "
+            "attention projection."
         ),
     )
     parser.add_argument(

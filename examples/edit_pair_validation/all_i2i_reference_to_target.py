@@ -581,15 +581,35 @@ def run_flux1_kontext_dev(**kwargs):
             ),
         ],
     )
+    kontext_images = [kwargs["source"]]
+    if kwargs.get("extra_edit_images"):
+        kontext_images.extend(kwargs["extra_edit_images"])
+    call_kwargs = {}
+    for key in (
+        "edit_latent_ot_reference_indices",
+        "edit_latent_ot_alpha",
+        "edit_latent_ot_start_step",
+        "edit_latent_ot_target_tokens",
+        "edit_latent_ot_source_tokens",
+        "edit_latent_ot_temperature",
+        "edit_latent_ot_iters",
+        "edit_latent_ot_block_start",
+        "edit_latent_ot_block_interval",
+        "edit_latent_ot_mode",
+        "edit_latent_ot_guide_box",
+    ):
+        if key in kwargs:
+            call_kwargs[key] = kwargs[key]
     return pipe(
         prompt=kwargs["prompt"],
         negative_prompt=kwargs["negative_prompt"],
-        kontext_images=kwargs["source"],
+        kontext_images=kontext_images,
         embedded_guidance=kwargs["cfg_scale"],
         seed=kwargs["seed"],
         height=kwargs["height"],
         width=kwargs["width"],
         num_inference_steps=kwargs["steps"],
+        **call_kwargs,
     )
 
 
@@ -745,16 +765,34 @@ def flux2_runner(*, variant: str, base_variant: str | None = None, dev: bool = F
         model_configs=model_configs,
         tokenizer_config=tokenizer_config,
     )
+    edit_images = [kwargs["source"]]
+    if kwargs.get("extra_edit_images"):
+        edit_images.extend(kwargs["extra_edit_images"])
     call_kwargs = {
         "prompt": kwargs["prompt"],
         "negative_prompt": kwargs["negative_prompt"],
         "seed": kwargs["seed"],
         "rand_device": "cuda" if kwargs["device"].startswith("cuda") else kwargs["device"],
-        "edit_image": [kwargs["source"]],
+        "edit_image": edit_images,
         "num_inference_steps": kwargs["steps"],
         "height": kwargs["height"],
         "width": kwargs["width"],
     }
+    for key in (
+        "edit_latent_ot_reference_indices",
+        "edit_latent_ot_alpha",
+        "edit_latent_ot_start_step",
+        "edit_latent_ot_target_tokens",
+        "edit_latent_ot_source_tokens",
+        "edit_latent_ot_temperature",
+        "edit_latent_ot_iters",
+        "edit_latent_ot_block_start",
+        "edit_latent_ot_block_interval",
+        "edit_latent_ot_mode",
+        "edit_latent_ot_guide_box",
+    ):
+        if key in kwargs:
+            call_kwargs[key] = kwargs[key]
     if dev:
         call_kwargs["embedded_guidance"] = kwargs["cfg_scale"]
     else:
