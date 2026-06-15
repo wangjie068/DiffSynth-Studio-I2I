@@ -233,7 +233,7 @@ def generate_one(args: argparse.Namespace) -> None:
         },
         "roi_ot_steering": {
             "enabled": bool(args.use_roi_ot_steering and extra_edit_images and spec.name in QWEN_MULTI_IMAGE_MODELS),
-            "method": "auto_target_token_sinkhorn_hidden_injection",
+            "method": "source_guided_auto_target_sinkhorn_residual_injection",
             "reference_indices": [1] if args.use_roi_ot_steering and extra_edit_images and spec.name in QWEN_MULTI_IMAGE_MODELS else [],
             "alpha": args.roi_ot_alpha,
             "start_step": args.roi_ot_start_step,
@@ -638,10 +638,11 @@ def add_generation_args(parser: argparse.ArgumentParser, seed_required: bool = T
         action="store_true",
         help=(
             "For Qwen multi-image edit models, add the label ROI reference and use Sinkhorn/OT to automatically "
-            "inject its hidden states into similar target tokens in late DiT blocks. No target mask is required."
+            "inject its residual details into similar target tokens in late DiT blocks. Source-design tokens guide "
+            "automatic localization; no target mask is required."
         ),
     )
-    parser.add_argument("--roi-ot-alpha", type=float, default=0.18)
+    parser.add_argument("--roi-ot-alpha", type=float, default=0.35)
     parser.add_argument(
         "--roi-ot-start-step",
         type=float,

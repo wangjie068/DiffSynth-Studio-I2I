@@ -736,6 +736,7 @@ def ot_guided_reference_injection(
     image: torch.Tensor,
     target_slice: tuple[int, int],
     reference_slices: list[tuple[int, int]],
+    guide_slice: tuple[int, int] | None,
     alpha: float,
     target_tokens: int,
     source_tokens: int,
@@ -750,6 +751,11 @@ def ot_guided_reference_injection(
     references = torch.cat([image[:, start:end] for start, end in reference_slices if end > start], dim=1)
     if target.numel() == 0 or references.numel() == 0:
         return image
+    guide = None
+    if guide_slice is not None:
+        guide_start, guide_end = guide_slice
+        if guide_end > guide_start and guide_end - guide_start == target_end - target_start:
+            guide = image[:, guide_start:guide_end]
 
     batch_size, target_len, _ = target.shape
     source_len = references.shape[1]
@@ -760,24 +766,45 @@ def ot_guided_reference_injection(
     for batch_id in range(batch_size):
         target_fp32 = target[batch_id].float()
         source_fp32 = references[batch_id].float()
+        guide_fp32 = guide[batch_id].float() if guide is not None else None
 
-        source_detail = (source_fp32 - source_fp32.mean(dim=0, keepdim=True)).norm(dim=-1)
+        source_center = source_fp32.mean(dim=0, keepdim=True)
+        source_delta = source_fp32 - source_center
+        source_detail = source_delta.norm(dim=-1)
         source_indices = torch.topk(source_detail, k=source_k, largest=True).indices
         source_selected = source_fp32.index_select(0, source_indices)
+        source_delta_selected = source_delta.index_select(0, source_indices)
 
         target_norm = F.normalize(target_fp32, dim=-1)
         source_norm = F.normalize(source_selected, dim=-1)
         target_source_similarity = target_norm @ source_norm.transpose(0, 1)
-        target_scores = target_source_similarity.max(dim=-1).values
-        target_indices = torch.topk(target_scores, k=target_k, largest=True).indices
+        target_similarity_scores = target_source_similarity.max(dim=-1).values
+
+        if guide_fp32 is not None:
+            guide_norm = F.normalize(guide_fp32, dim=-1)
+            guide_similarity_scores = (guide_norm @ source_norm.transpose(0, 1)).max(dim=-1).values
+            guide_similarity_scores = (guide_similarity_scores - guide_similarity_scores.mean()) / guide_similarity_scores.std().clamp_min(1e-6)
+            target_similarity_scores = (target_similarity_scores - target_similarity_scores.mean()) / target_similarity_scores.std().clamp_min(1e-6)
+            candidate_k = max(target_k, min(target_len, target_k * 4))
+            candidate_indices = torch.topk(guide_similarity_scores, k=candidate_k, largest=True).indices
+            candidate_scores = target_similarity_scores.index_select(0, candidate_indices)
+            candidate_scores = candidate_scores + guide_similarity_scores.index_select(0, candidate_indices)
+            selected_candidate_indices = torch.topk(candidate_scores, k=target_k, largest=True).indices
+            target_indices = candidate_indices.index_select(0, selected_candidate_indices)
+        else:
+            target_detail = (target_fp32 - target_fp32.mean(dim=0, keepdim=True)).norm(dim=-1)
+            target_detail = (target_detail - target_detail.mean()) / target_detail.std().clamp_min(1e-6)
+            target_similarity_scores = (target_similarity_scores - target_similarity_scores.mean()) / target_similarity_scores.std().clamp_min(1e-6)
+            target_scores = target_similarity_scores + 0.25 * target_detail
+            target_indices = torch.topk(target_scores, k=target_k, largest=True).indices
 
         target_selected = target_fp32.index_select(0, target_indices)
         target_selected_norm = F.normalize(target_selected, dim=-1)
         similarity = target_selected_norm @ source_norm.transpose(0, 1)
         transport = sinkhorn_transport(similarity, temperature=temperature, iters=sinkhorn_iters)
-        injected = transport @ source_selected
+        injected_delta = transport @ source_delta_selected
 
-        target_updates = target_selected + float(alpha) * (injected - target_selected)
+        target_updates = target_selected + float(alpha) * injected_delta
         output[batch_id, target_start + target_indices] = target_updates.to(dtype=output.dtype)
     return output
 
@@ -926,6 +953,7 @@ def model_fn_qwen_image(
                     for index in edit_latent_ot_reference_indices
                     if 0 <= index < len(edit_latent_spans)
                 ],
+                guide_slice=edit_latent_spans[0] if edit_latent_spans else None,
                 alpha=edit_latent_ot_alpha,
                 target_tokens=edit_latent_ot_target_tokens,
                 source_tokens=edit_latent_ot_source_tokens,
