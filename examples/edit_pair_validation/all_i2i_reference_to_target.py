@@ -358,6 +358,7 @@ def qwen_runner(
         height=height,
         width=width,
         cfg_scale=cfg_scale,
+        denoising_strength=denoising_strength if denoising_strength is not None else 1.0,
         **kwargs,
     )
 
@@ -609,6 +610,7 @@ def run_flux1_kontext_dev(**kwargs):
         height=kwargs["height"],
         width=kwargs["width"],
         num_inference_steps=kwargs["steps"],
+        denoising_strength=kwargs["denoising_strength"],
         **call_kwargs,
     )
 
@@ -777,6 +779,7 @@ def flux2_runner(*, variant: str, base_variant: str | None = None, dev: bool = F
         "num_inference_steps": kwargs["steps"],
         "height": kwargs["height"],
         "width": kwargs["width"],
+        "denoising_strength": kwargs["denoising_strength"],
     }
     for key in (
         "edit_latent_ot_reference_indices",
