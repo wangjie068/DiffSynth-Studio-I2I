@@ -643,8 +643,8 @@ def add_generation_args(parser: argparse.ArgumentParser, seed_required: bool = T
         action="store_true",
         help=(
             "For Qwen multi-image edit models, add the label ROI reference and use Sinkhorn/OT to automatically "
-            "inject its residual details into similar target tokens in late DiT blocks. Source-design tokens guide "
-            "automatic localization; no target mask is required."
+            "inject or replace its details in similar target tokens. Source-design tokens guide automatic "
+            "localization; no target mask is required."
         ),
     )
     parser.add_argument("--roi-ot-alpha", type=float, default=0.35)
@@ -662,9 +662,12 @@ def add_generation_args(parser: argparse.ArgumentParser, seed_required: bool = T
     parser.add_argument("--roi-ot-block-interval", type=int, default=5)
     parser.add_argument(
         "--roi-ot-mode",
-        choices=["replace", "residual"],
+        choices=["replace", "residual", "attention_qkv"],
         default="replace",
-        help="replace moves target tokens toward transported reference tokens; residual only adds transported detail deltas.",
+        help=(
+            "replace moves target hidden tokens toward transported reference tokens; residual only adds transported "
+            "detail deltas; attention_qkv performs source-guided replacement before Qwen attention Q/K/V projection."
+        ),
     )
     parser.add_argument(
         "--roi-reference-image",

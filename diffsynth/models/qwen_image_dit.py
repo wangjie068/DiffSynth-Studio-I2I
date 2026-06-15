@@ -1,5 +1,6 @@
 import torch, math, functools
 import torch.nn as nn
+import torch.nn.functional as F
 from typing import Tuple, Optional, Union, List
 from einops import rearrange
 from .general_modules import TimestepEmbeddings, RMSNorm, AdaLayerNorm
@@ -37,6 +38,121 @@ def qwen_image_flash_attention(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor
         x = torch.nn.functional.scaled_dot_product_attention(q, k, v, attn_mask=attention_mask)
         x = rearrange(x, "b n s d -> b s (n d)", n=num_heads)
     return x
+
+
+def sinkhorn_transport(similarity: torch.Tensor, temperature: float, iters: int) -> torch.Tensor:
+    temperature = max(float(temperature), 1e-4)
+    transport = torch.exp(similarity / temperature)
+    transport = transport + 1e-8
+    for _ in range(max(int(iters), 1)):
+        transport = transport / transport.sum(dim=-1, keepdim=True).clamp_min(1e-8)
+        transport = transport / transport.sum(dim=-2, keepdim=True).clamp_min(1e-8)
+    return transport / transport.sum(dim=-1, keepdim=True).clamp_min(1e-8)
+
+
+def normalized_box_token_indices(
+    box: Optional[Tuple[float, float, float, float]],
+    sequence_length: int,
+    device: torch.device,
+) -> Optional[torch.Tensor]:
+    if box is None:
+        return None
+    grid = int(round(math.sqrt(sequence_length)))
+    if grid * grid != sequence_length:
+        return None
+    left, top, right, bottom = box
+    if not all(0.0 <= value <= 1.0 for value in box):
+        return None
+    x0 = max(0, min(grid - 1, int(math.floor(left * grid))))
+    y0 = max(0, min(grid - 1, int(math.floor(top * grid))))
+    x1 = max(x0 + 1, min(grid, int(math.ceil(right * grid))))
+    y1 = max(y0 + 1, min(grid, int(math.ceil(bottom * grid))))
+    ys = torch.arange(y0, y1, device=device)
+    xs = torch.arange(x0, x1, device=device)
+    yy, xx = torch.meshgrid(ys, xs, indexing="ij")
+    return (yy.reshape(-1) * grid + xx.reshape(-1)).long()
+
+
+def source_guided_qkv_replacement(
+    image: torch.Tensor,
+    target_slice: Tuple[int, int],
+    reference_slices: List[Tuple[int, int]],
+    guide_slice: Optional[Tuple[int, int]],
+    guide_box: Optional[Tuple[float, float, float, float]],
+    alpha: float,
+    target_tokens: int,
+    source_tokens: int,
+    temperature: float,
+    sinkhorn_iters: int,
+) -> torch.Tensor:
+    if not reference_slices:
+        return image
+
+    target_start, target_end = target_slice
+    target = image[:, target_start:target_end]
+    reference_tensors = [image[:, start:end] for start, end in reference_slices if end > start]
+    if not reference_tensors:
+        return image
+    references = torch.cat(reference_tensors, dim=1)
+    if target.numel() == 0 or references.numel() == 0:
+        return image
+
+    guide = None
+    if guide_slice is not None:
+        guide_start, guide_end = guide_slice
+        if guide_end > guide_start and guide_end - guide_start == target_end - target_start:
+            guide = image[:, guide_start:guide_end]
+
+    batch_size, target_len, _ = target.shape
+    source_len = references.shape[1]
+    target_k = max(1, min(int(target_tokens), target_len))
+    source_k = max(1, min(int(source_tokens), source_len))
+    guide_box_indices = normalized_box_token_indices(guide_box, target_len, target.device)
+
+    replacement = image.clone()
+    for batch_id in range(batch_size):
+        target_fp32 = target[batch_id].float()
+        source_fp32 = references[batch_id].float()
+        guide_fp32 = guide[batch_id].float() if guide is not None else None
+
+        source_center = source_fp32.mean(dim=0, keepdim=True)
+        source_detail = (source_fp32 - source_center).norm(dim=-1)
+        source_indices = torch.topk(source_detail, k=source_k, largest=True).indices
+        source_selected = source_fp32.index_select(0, source_indices)
+
+        source_norm = F.normalize(source_selected, dim=-1)
+        target_norm = F.normalize(target_fp32, dim=-1)
+        target_similarity_scores = (target_norm @ source_norm.transpose(0, 1)).max(dim=-1).values
+
+        if guide_fp32 is not None:
+            guide_norm = F.normalize(guide_fp32, dim=-1)
+            guide_similarity_scores = (guide_norm @ source_norm.transpose(0, 1)).max(dim=-1).values
+            guide_similarity_scores = (guide_similarity_scores - guide_similarity_scores.mean()) / guide_similarity_scores.std().clamp_min(1e-6)
+            target_similarity_scores = (target_similarity_scores - target_similarity_scores.mean()) / target_similarity_scores.std().clamp_min(1e-6)
+            if guide_box_indices is not None and guide_box_indices.numel() > 0:
+                candidate_indices = guide_box_indices
+                if candidate_indices.numel() > target_k * 4:
+                    guide_box_scores = guide_similarity_scores.index_select(0, candidate_indices)
+                    selected_guide = torch.topk(guide_box_scores, k=target_k * 4, largest=True).indices
+                    candidate_indices = candidate_indices.index_select(0, selected_guide)
+            else:
+                candidate_k = max(target_k, min(target_len, target_k * 4))
+                candidate_indices = torch.topk(guide_similarity_scores, k=candidate_k, largest=True).indices
+            target_k_local = min(target_k, candidate_indices.numel())
+            candidate_scores = target_similarity_scores.index_select(0, candidate_indices)
+            candidate_scores = candidate_scores + guide_similarity_scores.index_select(0, candidate_indices)
+            selected_candidate_indices = torch.topk(candidate_scores, k=target_k_local, largest=True).indices
+            target_indices = candidate_indices.index_select(0, selected_candidate_indices)
+        else:
+            target_indices = torch.topk(target_similarity_scores, k=target_k, largest=True).indices
+
+        target_selected = target_fp32.index_select(0, target_indices)
+        similarity = F.normalize(target_selected, dim=-1) @ source_norm.transpose(0, 1)
+        transport = sinkhorn_transport(similarity, temperature=temperature, iters=sinkhorn_iters)
+        transported_source = transport @ source_selected
+        target_updates = target_selected + float(alpha) * (transported_source - target_selected)
+        replacement[batch_id, target_start + target_indices] = target_updates.to(dtype=replacement.dtype)
+    return replacement
 
 
 class ApproximateGELU(nn.Module):
@@ -393,8 +509,12 @@ class QwenDoubleStreamAttention(nn.Module):
         image_rotary_emb: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
         attention_mask: Optional[torch.FloatTensor] = None,
         enable_fp8_attention: bool = False,
+        replacement_kwargs: Optional[dict] = None,
     ) -> Tuple[torch.FloatTensor, torch.FloatTensor]:
-        img_q, img_k, img_v = self.to_q(image), self.to_k(image), self.to_v(image)
+        replacement_image = image
+        if replacement_kwargs is not None:
+            replacement_image = source_guided_qkv_replacement(image=image, **replacement_kwargs)
+        img_q, img_k, img_v = self.to_q(replacement_image), self.to_k(replacement_image), self.to_v(replacement_image)
         txt_q, txt_k, txt_v = self.add_q_proj(text), self.add_k_proj(text), self.add_v_proj(text)
         seq_txt = txt_q.shape[1]
 
@@ -509,6 +629,7 @@ class QwenImageTransformerBlock(nn.Module):
         attention_mask: Optional[torch.Tensor] = None,
         enable_fp8_attention = False,
         modulate_index: Optional[List[int]] = None,
+        attention_replacement_kwargs: Optional[dict] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
 
         img_mod_attn, img_mod_mlp = self.img_mod(temb).chunk(2, dim=-1)  # [B, 3*dim] each
@@ -528,6 +649,7 @@ class QwenImageTransformerBlock(nn.Module):
             image_rotary_emb=image_rotary_emb,
             attention_mask=attention_mask,
             enable_fp8_attention=enable_fp8_attention,
+            replacement_kwargs=attention_replacement_kwargs,
         )
         
         image = image + img_gate * img_attn_out
