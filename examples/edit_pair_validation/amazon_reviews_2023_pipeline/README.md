@@ -44,7 +44,7 @@ data/amazon_reviews_2023/media_all/
 Annotation output:
 
 ```text
-outputs/edit_pair_validation/amazon_reviews_2023_product_annotations.jsonl
+data/amazon_reviews_2023/annotations/product_annotations.jsonl
 ```
 
 Each annotation line keeps:
@@ -63,7 +63,7 @@ Use local data only for flow validation:
 python3 examples/edit_pair_validation/amazon_reviews_2023_pipeline/annotate_product_media_once.py \
   --image-jsonl data/amazon_reviews_2023/media_all/annotations/amazon_reviews_2023_media_urls.jsonl \
   --product-raw-jsonl data/amazon_reviews_2023/media_all/products_raw_sample.jsonl \
-  --out outputs/edit_pair_validation/amazon_reviews_2023_product_annotations_test.jsonl \
+  --out data/amazon_reviews_2023/annotations/product_annotations_test.jsonl \
   --max-products 2 \
   --max-images-per-product 6 \
   --min-images 4 \
@@ -113,12 +113,13 @@ Beauty bottles/skincare first:
 python3 examples/edit_pair_validation/amazon_reviews_2023_pipeline/annotate_product_media_once.py \
   --image-jsonl data/amazon_reviews_2023/media_all/annotations/amazon_reviews_2023_media_urls.jsonl \
   --product-raw-jsonl data/amazon_reviews_2023/media_all/products_raw.jsonl \
-  --out outputs/edit_pair_validation/amazon_reviews_2023_product_annotations.jsonl \
+  --out data/amazon_reviews_2023/annotations/product_annotations_beauty.jsonl \
   --category-regex 'All_Beauty' \
   --title-regex 'serum|cream|moisturizer|lotion|shampoo|conditioner|sunscreen|cleanser|face wash|toner|oil|balm|body wash|spray|gel|essence|mask|scrub' \
   --max-products 100000000 \
   --max-images-per-product 10 \
   --min-images 4 \
+  --workers 4 \
   --sleep 0.1
 ```
 
@@ -128,12 +129,13 @@ All categories:
 python3 examples/edit_pair_validation/amazon_reviews_2023_pipeline/annotate_product_media_once.py \
   --image-jsonl data/amazon_reviews_2023/media_all/annotations/amazon_reviews_2023_media_urls.jsonl \
   --product-raw-jsonl data/amazon_reviews_2023/media_all/products_raw.jsonl \
-  --out outputs/edit_pair_validation/amazon_reviews_2023_product_annotations_all.jsonl \
+  --out data/amazon_reviews_2023/annotations/product_annotations_all.jsonl \
   --category-regex '' \
   --title-regex '' \
   --max-products 100000000 \
   --max-images-per-product 10 \
   --min-images 4 \
+  --workers 4 \
   --sleep 0.1
 ```
 
@@ -141,13 +143,16 @@ Notes:
 
 - `--max-valid-pairs-per-product 0` is the default and means no cap.
 - The model is still instructed to select useful pairs only, not all combinations.
+- A valid pair requires the target image to contain the complete same product/package as the source image. Partial eye/skin/detail/claim graphics are retained with reject reasons, not used as valid pairs.
 - Existing output is resumable; without `--overwrite`, already annotated ASINs are skipped.
+- For multiple API keys, set `GPT_API_KEYS=key1,key2` in `.env`, or pass `--api-keys 'key1,key2'`.
+- `--workers` controls concurrent product-level model calls. Keep it no larger than your key/rate-limit capacity.
 
 ## 4. Package Annotation Dataset for Hugging Face
 
 ```bash
 python3 examples/edit_pair_validation/amazon_reviews_2023_pipeline/prepare_hf_dataset.py \
-  --annotations outputs/edit_pair_validation/amazon_reviews_2023_product_annotations.jsonl \
+  --annotations data/amazon_reviews_2023/annotations/product_annotations_beauty.jsonl \
   --output-dir data/amazon_reviews_2023/hf_product_edit_annotations \
   --validation-ratio 0.02
 ```

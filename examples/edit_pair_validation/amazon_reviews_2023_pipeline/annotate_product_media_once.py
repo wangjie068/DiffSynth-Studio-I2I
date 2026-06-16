@@ -7,6 +7,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from pathlib import Path
 from typing import Optional
 from urllib.parse import quote
@@ -33,8 +34,10 @@ Do all annotation in ONE pass:
 - Do NOT discard data. Use labels, scores, and reject reasons.
 - Do NOT output all pair combinations. Select all genuinely useful pair candidates, and reject uncertain ones with reasons.
 - Prefer a clean main product/source image to a moderate target image.
-- A valid target image MUST visibly contain the same physical product/package/model. Do not create a valid pair when the product is absent and only implied by eyelashes, ingredients, effects, claims, charts, or before/after examples.
-- Avoid pairs where the target is a pure manual, ingredient panel, size chart, zoomed texture, claim graphic, before/after panel without the product, or a scene where the product becomes incidental.
+- A valid target image MUST contain the complete same physical product/package/model from the source image. The product can be recomposed into an ad/lifestyle/graphic layout, but the full saleable product must remain visible as a clear primary subject.
+- Do not create a valid pair when the target product is cropped, partially hidden, absent, tiny, incidental, or only implied by eyelashes, eyes, skin, ingredients, effects, claims, charts, or before/after examples.
+- Avoid pairs where the target is a pure manual, ingredient panel, size chart, zoomed texture, claim graphic, eye/face close-up ad, before/after panel without a dominant product, or a scene where the product becomes incidental.
+- If the target is dominated by a human face, eye, lips, skin, hand, or body part, reject the pair unless the same product/package remains large, clear, and dominant.
 - Keep transformations controlled: low or medium transformation is preferred over high.
 - Videos are not provided to you. Ignore video URLs.
 
@@ -66,6 +69,9 @@ angle_to_ad, bad_or_uncertain
     {
       "image_index": 0,
       "image_id": "string",
+      "detailed_description": "2-4 sentences describing the full visible content, product placement, background, text/graphics, props, and any visible issues",
+      "product_identity_description": "detailed description of the visible product/package/model/color/shape/logo evidence",
+      "target_edit_description": "what an image-editing model would need to create if this image is used as target",
       "role": "main_product",
       "source_candidate_score": 0.0,
       "target_candidate_score": 0.0,
@@ -200,6 +206,27 @@ def build_client(base_url: str, api_version: str, api_key: str):
     return CurlAzureChatClient(base_url, api_version, api_key)
 
 
+def split_api_keys(value: Optional[str]) -> list[str]:
+    if not value:
+        return []
+    keys = []
+    for part in re.split(r"[,;\n]", value):
+        part = part.strip()
+        if part:
+            keys.append(part)
+    return keys
+
+
+def get_api_keys(args) -> list[str]:
+    keys = split_api_keys(args.api_keys)
+    if keys:
+        return keys
+    keys = split_api_keys(args.api_key)
+    if keys:
+        return keys
+    return []
+
+
 def is_url_accessible(url: str, timeout: int = 15) -> bool:
     result = subprocess.run(
         [
@@ -297,11 +324,63 @@ def build_content(product_id: str, items: list[dict], raw_product: Optional[dict
     return content, metadata
 
 
+def annotate_one_product(task: dict, args, api_key: Optional[str]):
+    product_id = task["product_id"]
+    selected = task["selected"]
+    raw_product = task.get("raw_product")
+    content, metadata = build_content(product_id, selected, raw_product)
+    if args.dry_run:
+        return {
+            "product_id": product_id,
+            "source_dataset": "McAuley-Lab/Amazon-Reviews-2023",
+            "raw_product": raw_product,
+            "metadata": metadata,
+            "source_images": selected,
+        }
+
+    client = build_client(args.base_url, args.api_version, api_key)
+    last_error = None
+    for attempt in range(args.retries):
+        try:
+            response_text = client.create(args.model, content)
+            raw_annotation = parse_json_response(response_text)
+            annotation, valid_pairs = postprocess_annotation(raw_annotation, args)
+            return {
+                "product_id": product_id,
+                "source_dataset": "McAuley-Lab/Amazon-Reviews-2023",
+                "raw_product": raw_product,
+                "metadata": metadata,
+                "source_images": selected,
+                "raw_annotation": raw_annotation,
+                "annotation": annotation,
+                "valid_pairs": valid_pairs,
+            }
+        except Exception as error:
+            last_error = error
+            time.sleep(2 ** attempt)
+    return {
+        "product_id": product_id,
+        "source_dataset": "McAuley-Lab/Amazon-Reviews-2023",
+        "raw_product": raw_product,
+        "metadata": metadata,
+        "source_images": selected,
+        "error": str(last_error),
+    }
+
+
 def as_float(value, default=0.0):
     try:
         return float(value)
     except (TypeError, ValueError):
         return default
+
+
+def as_bool(value) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "y"}
+    return bool(value)
 
 
 def postprocess_annotation(annotation: dict, args) -> tuple[dict, list[dict]]:
@@ -320,6 +399,15 @@ def postprocess_annotation(annotation: dict, args) -> tuple[dict, list[dict]]:
         "packaging_text",
         "bad_or_unclear",
     }
+    allowed_pair_types = {
+        "main_to_ad",
+        "main_to_angle",
+        "main_to_lifestyle",
+        "main_to_infographic",
+        "main_to_detail",
+        "angle_to_ad",
+        "bad_or_uncertain",
+    }
     for pair in annotation.get("pairs", []):
         if not isinstance(pair, dict):
             continue
@@ -334,19 +422,31 @@ def postprocess_annotation(annotation: dict, args) -> tuple[dict, list[dict]]:
         target_same = as_float(target.get("same_product_confidence"))
         identity = as_float(pair.get("identity_confidence"))
         target_role = target.get("role")
+        pair_type = pair.get("pair_type")
+        target_full_product_visible = as_bool(target.get("full_product_visible"))
 
+        if pair_type not in allowed_pair_types:
+            reasons.append(f"unknown_pair_type:{pair_type}")
         if source_score < args.min_pair_source_score:
             reasons.append(f"source_candidate_score<{args.min_pair_source_score}")
         if target_score < args.min_pair_target_score:
             reasons.append(f"target_candidate_score<{args.min_pair_target_score}")
         if target_visibility < args.min_pair_target_visibility:
             reasons.append(f"target_product_visibility<{args.min_pair_target_visibility}")
+        if not target_full_product_visible:
+            reasons.append("target_full_product_not_visible")
         if target_same < args.min_pair_target_same_confidence:
             reasons.append(f"target_same_product_confidence<{args.min_pair_target_same_confidence}")
         if identity < args.min_pair_identity_confidence:
             reasons.append(f"pair_identity_confidence<{args.min_pair_identity_confidence}")
         if target_role in blocked_roles:
             reasons.append(f"blocked_target_role:{target_role}")
+        if (
+            not args.allow_human_dominant_targets
+            and (target.get("has_face") or target.get("has_human"))
+            and target_visibility < args.min_pair_human_target_visibility
+        ):
+            reasons.append(f"human_or_face_dominant_target_visibility<{args.min_pair_human_target_visibility}")
         if pair.get("transformation_magnitude") == "high":
             reasons.append("high_transformation_magnitude")
 
@@ -358,6 +458,11 @@ def postprocess_annotation(annotation: dict, args) -> tuple[dict, list[dict]]:
             and as_float(pair.get("edit_usefulness_score")) >= args.high_confidence_override_usefulness
             and target_same >= args.min_pair_target_same_confidence
             and target_role not in blocked_roles
+            and not (
+                not args.allow_human_dominant_targets
+                and (target.get("has_face") or target.get("has_human"))
+                and target_visibility < args.min_pair_human_target_visibility
+            )
             and pair.get("transformation_magnitude") != "high"
         )
         if high_confidence_override:
@@ -503,7 +608,7 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Annotate one Amazon product per multimodal model call.")
     parser.add_argument("--image-jsonl", type=Path, default=Path("data/amazon_reviews_2023/media_all/annotations/amazon_reviews_2023_media_urls.jsonl"))
     parser.add_argument("--product-raw-jsonl", type=Path)
-    parser.add_argument("--out", type=Path, default=Path("outputs/edit_pair_validation/amazon_reviews_2023_product_annotations.jsonl"))
+    parser.add_argument("--out", type=Path, default=Path("data/amazon_reviews_2023/annotations/product_annotations.jsonl"))
     parser.add_argument("--max-products", type=int, default=10)
     parser.add_argument("--max-images-per-product", type=int, default=10)
     parser.add_argument("--min-images", type=int, default=4)
@@ -515,18 +620,23 @@ def parse_args():
     parser.add_argument("--overwrite", action="store_true")
     parser.add_argument("--sleep", type=float, default=0.2)
     parser.add_argument("--retries", type=int, default=2)
+    parser.add_argument("--workers", type=int, default=1)
+    parser.add_argument("--max-pending", type=int, default=0, help="0 means workers * 2.")
     parser.add_argument("--min-pair-source-score", type=float, default=0.75)
     parser.add_argument("--min-pair-target-score", type=float, default=0.5)
     parser.add_argument("--min-pair-target-visibility", type=float, default=0.25)
+    parser.add_argument("--min-pair-human-target-visibility", type=float, default=0.75)
     parser.add_argument("--min-pair-target-same-confidence", type=float, default=0.85)
     parser.add_argument("--min-pair-identity-confidence", type=float, default=0.85)
     parser.add_argument("--max-valid-pairs-per-product", type=int, default=0, help="0 means no cap.")
+    parser.add_argument("--allow-human-dominant-targets", action="store_true")
     parser.add_argument("--high-confidence-override-identity", type=float, default=0.9)
     parser.add_argument("--high-confidence-override-training-value", type=float, default=0.7)
     parser.add_argument("--high-confidence-override-usefulness", type=float, default=0.7)
     parser.add_argument("--base-url", default=os.environ.get("GPT_BASE_URL") or os.environ.get("LLM_BASE_URL") or DEFAULT_BASE_URL)
     parser.add_argument("--api-version", default=os.environ.get("GPT_API_VERSION", DEFAULT_API_VERSION))
     parser.add_argument("--model", default=os.environ.get("GPT_MODEL", DEFAULT_MODEL))
+    parser.add_argument("--api-keys", default=os.environ.get("GPT_API_KEYS") or os.environ.get("OPENAI_API_KEYS") or os.environ.get("GPT5_API_KEYS"))
     parser.add_argument("--api-key", default=os.environ.get("OPENAI_API_KEY") or os.environ.get("GPT_AK") or os.environ.get("GPT5_API_KEY"))
     return parser.parse_args()
 
@@ -538,16 +648,36 @@ def main():
     title_re = re.compile(args.title_regex, re.I) if args.title_regex else None
     if args.overwrite and args.out.exists():
         args.out.unlink()
-    if not args.dry_run and not args.api_key:
-        raise SystemExit("Missing API key. Set OPENAI_API_KEY, GPT_AK, or GPT5_API_KEY in .env.")
+    api_keys = get_api_keys(args)
+    if not args.dry_run and not api_keys:
+        raise SystemExit("Missing API key. Set GPT_API_KEYS, OPENAI_API_KEYS, OPENAI_API_KEY, GPT_AK, or GPT5_API_KEY in .env.")
+    if args.workers < 1:
+        raise SystemExit("--workers must be >= 1")
 
     done = already_done(args.out)
     product_raw_reader = ProductRawReader(args.product_raw_jsonl)
-    client = None if args.dry_run else build_client(args.base_url, args.api_version, args.api_key)
     args.out.parent.mkdir(parents=True, exist_ok=True)
-    count = 0
+    submitted = 0
+    written = 0
+    max_pending = args.max_pending if args.max_pending > 0 else args.workers * 2
+
+    def write_completed(futures, out_file, wait_mode):
+        nonlocal written
+        if not futures:
+            return futures
+        done_futures, pending_futures = wait(futures, return_when=wait_mode)
+        for future in done_futures:
+            result = future.result()
+            out_file.write(json.dumps(result, ensure_ascii=False) + "\n")
+            out_file.flush()
+            written += 1
+            title = result.get("metadata", {}).get("title", "")
+            print(f"wrote {written}: {result.get('product_id')} | {title[:100]}", flush=True)
+        return set(pending_futures)
+
     try:
-        with args.out.open("a", encoding="utf-8") as out_file:
+        with args.out.open("a", encoding="utf-8") as out_file, ThreadPoolExecutor(max_workers=args.workers) as executor:
+            futures = set()
             for product_id, items in iter_product_groups(args.image_jsonl, args.max_scan_lines):
                 if product_id in done:
                     continue
@@ -571,56 +701,25 @@ def main():
                         item["image_index"] = index
 
                 raw_product = product_raw_reader.get(product_id)
-                content, metadata = build_content(product_id, selected, raw_product)
-                if args.dry_run:
-                    result = {
-                        "product_id": product_id,
-                        "source_dataset": "McAuley-Lab/Amazon-Reviews-2023",
-                        "raw_product": raw_product,
-                        "metadata": metadata,
-                        "source_images": selected,
-                    }
-                else:
-                    last_error = None
-                    for attempt in range(args.retries):
-                        try:
-                            response_text = client.create(args.model, content)
-                            raw_annotation = parse_json_response(response_text)
-                            annotation, valid_pairs = postprocess_annotation(raw_annotation, args)
-                            result = {
-                                "product_id": product_id,
-                                "source_dataset": "McAuley-Lab/Amazon-Reviews-2023",
-                                "raw_product": raw_product,
-                                "metadata": metadata,
-                                "source_images": selected,
-                                "raw_annotation": raw_annotation,
-                                "annotation": annotation,
-                                "valid_pairs": valid_pairs,
-                            }
-                            break
-                        except Exception as error:
-                            last_error = error
-                            time.sleep(2 ** attempt)
-                    else:
-                        result = {
-                            "product_id": product_id,
-                            "source_dataset": "McAuley-Lab/Amazon-Reviews-2023",
-                            "raw_product": raw_product,
-                            "metadata": metadata,
-                            "source_images": selected,
-                            "error": str(last_error),
-                        }
-                out_file.write(json.dumps(result, ensure_ascii=False) + "\n")
-                out_file.flush()
-                count += 1
-                print(f"wrote {count}: {product_id} | {title[:100]}", flush=True)
-                if count >= args.max_products:
+                api_key = api_keys[submitted % len(api_keys)] if api_keys else None
+                task = {
+                    "product_id": product_id,
+                    "selected": selected,
+                    "raw_product": raw_product,
+                }
+                futures.add(executor.submit(annotate_one_product, task, args, api_key))
+                submitted += 1
+                if submitted >= args.max_products:
                     break
+                if len(futures) >= max_pending:
+                    futures = write_completed(futures, out_file, FIRST_COMPLETED)
                 if args.sleep:
                     time.sleep(args.sleep)
+            while futures:
+                futures = write_completed(futures, out_file, FIRST_COMPLETED)
     finally:
         product_raw_reader.close()
-    print(f"done wrote={count} out={args.out}")
+    print(f"done submitted={submitted} wrote={written} out={args.out}")
 
 
 if __name__ == "__main__":
