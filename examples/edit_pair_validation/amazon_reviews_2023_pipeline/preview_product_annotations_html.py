@@ -98,18 +98,21 @@ def image_card(source_item: dict, label: dict, selected_index):
 
 
 def pair_card(pair: dict, source_item: dict, target_item: dict, source_label: dict, target_label: dict, index: int):
-    reject = bool(pair.get("reject"))
-    status = "REJECT" if reject else "VALID"
-    status_class = "bad" if reject else "good"
+    final_status = pair.get("final_status") or ("rejected" if pair.get("reject") else "selected")
+    status = str(final_status).upper()
+    status_class = "good" if final_status == "selected" else "bad" if final_status == "rejected" else "review"
     source_url = image_url(source_item)
     target_url = image_url(target_item)
-    reasons = pair.get("reject_reasons") or []
+    reasons = pair.get("post_filter_reasons") or pair.get("reject_reasons") or []
     return f"""
     <article class="pair-card {status_class}">
       <header>
         <h4>Pair #{index} <span class="{status_class}">{status}</span></h4>
         <div class="metrics">
           {metric("type", pair.get("pair_type"))}
+          {metric("model", pair.get("model_status"))}
+          {metric("post", pair.get("post_filter_status"))}
+          {metric("final", final_status)}
           {metric("identity", pair.get("identity_confidence"))}
           {metric("quality", pair.get("pair_quality_score"))}
           {metric("tier", pair.get("pair_quality_tier"))}
@@ -130,7 +133,9 @@ def pair_card(pair: dict, source_item: dict, target_item: dict, source_label: di
           <a href="{esc(target_url)}" target="_blank"><img src="{esc(target_url)}" loading="lazy"></a>
         </div>
       </div>
-      {'<p class="reject"><b>reject reasons</b><br>' + esc(", ".join(reasons)) + '</p>' if reasons else ''}
+      {'<p class="reject"><b>post filter reasons</b><br>' + esc(", ".join(reasons)) + '</p>' if reasons else ''}
+      <p><b>review reasons</b><br>{esc(pair.get("review_reasons"))}</p>
+      <p><b>model reject diagnostics</b><br>{esc(pair.get("model_reject_reasons"))}</p>
       <p><b>model quality judgement</b><br>{esc(pair.get("pair_quality_judgement"))}</p>
       <p><b>failure modes</b><br>{esc(pair.get("pair_failure_modes"))}</p>
       <p><b>instruction</b><br>{esc(pair.get("edit_instruction"))}</p>
@@ -233,6 +238,7 @@ a {{ color:#164f9f; }}
 .metric {{ display:inline-flex; gap:6px; border:1px solid #d6d6d1; background:#fff; border-radius:6px; padding:4px 7px; font-size:12px; }}
 .metric.good, .good {{ color:#087443; border-color:#97c9b0; }}
 .bad {{ color:#b42318; border-color:#f0a8a1; }}
+.review {{ color:#9a5b00; border-color:#e7c27f; }}
 .muted {{ color:#666; }}
 .product {{ margin:18px 22px 28px; background:#fff; border:1px solid #ddd; border-radius:8px; padding:18px; }}
 .product-head {{ display:flex; justify-content:space-between; gap:16px; border-bottom:1px solid #eee; padding-bottom:12px; }}
@@ -255,6 +261,7 @@ img {{ max-width:100%; height:220px; object-fit:contain; background:#fff; displa
 .pair-card {{ border:1px solid #ddd; border-radius:8px; padding:12px; background:#fff; }}
 .pair-card.good {{ border-left:5px solid #168a52; }}
 .pair-card.bad {{ border-left:5px solid #c3372b; }}
+.pair-card.review {{ border-left:5px solid #c98213; }}
 .pair-card h4 {{ margin:0 0 8px; }}
 .pair-images {{ display:grid; grid-template-columns:1fr 1fr; gap:10px; }}
 .pair-images img {{ height:210px; }}

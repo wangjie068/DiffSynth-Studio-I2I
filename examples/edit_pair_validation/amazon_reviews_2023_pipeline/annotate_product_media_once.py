@@ -31,6 +31,12 @@ Do all annotation in ONE pass:
 5. Select all useful image-edit pair candidates without forcing a fixed count.
 6. Write detailed edit instructions for the selected pairs.
 
+# Decision Contract
+- Your structured quality fields are the main signal: is_high_quality_pair, pair_quality_score, pair_quality_tier, pair_quality_judgement, identity_confidence, logo_preservation_score, small_text_training_value_score, target quality, and target aesthetics.
+- reject/model_reject_reasons are diagnostic notes for review. They should explain risks, but downstream code will not treat free-form reject text as an automatic hard rejection.
+- Be internally consistent: if is_high_quality_pair=true and pair_quality_tier is good/excellent, do not add reject reasons that contradict the quality judgement.
+- Use structured enum fields for objective facts such as product_view, view_change, layout_type, layout_complexity, product_instance_count, full_product_visible, and same_product_confidence. Do not rely on prose to encode these decisions.
+
 # Important Constraints
 - The input images are supposed to belong to the same product, but some may show bundles, details, charts, or unrelated accessories. Do not assume all are equally useful.
 - Do NOT discard data. Use labels, scores, and reject reasons.
@@ -237,7 +243,8 @@ angle_to_ad, bad_or_uncertain
       "target_visible_text_to_generate": ["exact visible target words that should be generated, including headline/body/icon/benefit labels"],
       "text_rendering_requirements": "specific typography, placement, size, color, legibility, and no-hallucination requirements for all visible target text",
       "reject": false,
-      "reject_reasons": [],
+      "reject_reasons": ["legacy diagnostic reasons only; keep empty when is_high_quality_pair is true"],
+      "model_reject_reasons": ["diagnostic risks for human review; do not contradict pair_quality_judgement"],
       "edit_instruction": "concise image editing instruction from source to target",
       "edit_instruction_detailed": "complete detailed training prompt: preserve exact source product identity; describe target composition, object placement, camera/view, product scale/orientation, props/effects, background/surface, lighting/shadows/reflections, exact visible text and typography, aesthetic style, and forbidden changes",
       "preservation_requirements": ["product identity", "logo/brand", "small label text", "package geometry"]
@@ -634,6 +641,14 @@ def product_reject_reasons(annotation: dict, args) -> list[str]:
     return reasons
 
 
+def model_pair_status(pair: dict) -> str:
+    if pair.get("is_high_quality_pair") is True:
+        return "valid"
+    if pair.get("is_high_quality_pair") is False or as_bool(pair.get("reject")):
+        return "reject"
+    return "review"
+
+
 def target_is_back_view(target: dict, pair: dict) -> bool:
     target_view = str(target.get("product_view") or target.get("view_orientation") or "").lower()
     pair_view = str(pair.get("view_change") or "").lower()
@@ -641,19 +656,7 @@ def target_is_back_view(target: dict, pair: dict) -> bool:
         return True
     if pair_view in {"front_to_back", "front_to_rear", "front_to_reverse"}:
         return True
-    descriptive_text = " ".join(
-        str(value or "")
-        for value in [
-            target.get("detailed_description"),
-            target.get("product_identity_description"),
-            target.get("target_edit_description"),
-        ]
-    )
-    return bool(re.search(
-        r"\b(side/back|back[- ]?(view|label|panel|side|facing)|rear[- ]?(view|label|panel)|reverse[- ]?(view|side))\b",
-        descriptive_text,
-        re.I,
-    ))
+    return False
 
 
 def source_complexity_reasons(source: dict, args) -> list[str]:
@@ -759,7 +762,10 @@ def postprocess_annotation(annotation: dict, args) -> tuple[dict, list[dict]]:
         pair = dict(pair)
         source = images.get(pair.get("source_image_index"), {})
         target = images.get(pair.get("target_image_index"), {})
-        reasons = list(pair.get("reject_reasons") or [])
+        model_reject_reasons = list(pair.get("model_reject_reasons") or []) + list(pair.get("reject_reasons") or [])
+        reasons = []
+        if model_reject_reasons:
+            pair["model_reject_reasons"] = sorted(set(str(reason) for reason in model_reject_reasons))
 
         source_score = as_float(source.get("source_candidate_score"))
         target_score = as_float(target.get("target_candidate_score"))
@@ -849,71 +855,36 @@ def postprocess_annotation(annotation: dict, args) -> tuple[dict, list[dict]]:
         reasons.extend(source_complexity_reasons(source, args))
         if args.reject_target_back_view and target_is_back_view(target, pair):
             reasons.append("target_back_or_rear_view_not_allowed")
-        reasons.extend(target_complexity_reasons(source, target, pair, args))
+        if args.reject_complex_targets:
+            reasons.extend(target_complexity_reasons(source, target, pair, args))
         if target_role in blocked_roles:
             reasons.append(f"blocked_target_role:{target_role}")
         if pair.get("transformation_magnitude") == "high":
             reasons.append("high_transformation_magnitude")
 
-        warnings = []
-        high_confidence_override = (
-            pair.get("pair_type") in {"main_to_ad", "main_to_angle", "main_to_lifestyle", "angle_to_ad"}
-            and not product_reasons
-            and (not args.require_model_high_quality_pair or pair.get("is_high_quality_pair") is True)
-            and pair_quality >= args.min_pair_quality_score
-            and (not args.require_selected_main_source or pair.get("source_image_index") == selected_source_index)
-            and identity >= args.high_confidence_override_identity
-            and as_float(pair.get("training_value_score")) >= args.high_confidence_override_training_value
-            and as_float(pair.get("edit_usefulness_score")) >= args.high_confidence_override_usefulness
-            and source_quality >= args.min_pair_source_quality_score
-            and target_quality >= args.min_pair_target_quality_score
-            and target_aesthetic >= args.min_pair_target_aesthetic_score
-            and logo_score >= args.min_pair_logo_preservation_score
-            and small_text_score >= args.min_pair_small_text_training_score
-            and source_description_chars >= args.min_image_detailed_description_chars
-            and target_description_chars >= args.min_image_detailed_description_chars
-            and source_identity_chars >= args.min_product_identity_description_chars
-            and target_identity_chars >= args.min_product_identity_description_chars
-            and detailed_instruction_chars >= args.min_pair_detailed_instruction_chars
-            and logo_preservation_chars >= args.min_pair_logo_preservation_chars
-            and small_text_preservation_chars >= args.min_pair_small_text_preservation_chars
-            and target_small_text_ocr_chars >= args.min_target_small_text_ocr_chars
-            and (
-                not args.require_target_visible_text_in_instruction
-                or not as_bool(target.get("has_marketing_text"))
-                or target_text_inventory_chars < args.min_target_visible_text_inventory_chars
-                or target_text_instruction_overlap >= args.min_target_text_instruction_overlap
-            )
-            and (not args.reject_target_back_view or not target_is_back_view(target, pair))
-            and not source_complexity_reasons(source, args)
-            and not target_complexity_reasons(source, target, pair, args)
-            and target_same >= args.min_pair_target_same_confidence
-            and target_role not in blocked_roles
-            and pair.get("transformation_magnitude") != "high"
-        )
-        if high_confidence_override:
-            overridable = {
-                f"target_candidate_score<{args.min_pair_target_score}",
-                f"target_product_visibility<{args.min_pair_target_visibility}",
-            }
-            kept_reasons = []
-            for reason in reasons:
-                if reason in overridable:
-                    warnings.append(f"overrode_{reason}")
-                else:
-                    kept_reasons.append(reason)
-            reasons = kept_reasons
-
-        if reasons:
-            pair["reject"] = True
-            pair["reject_reasons"] = sorted(set(str(reason) for reason in reasons))
-            pair["post_filter_rejected"] = True
+        model_status = model_pair_status(pair)
+        post_filter_reasons = sorted(set(str(reason) for reason in reasons))
+        post_filter_status = "fail" if post_filter_reasons else "pass"
+        if post_filter_status == "fail":
+            final_status = "rejected"
+        elif model_status == "valid":
+            final_status = "selected"
         else:
-            pair["reject"] = False
-            pair["reject_reasons"] = []
-            pair["post_filter_rejected"] = False
-            if warnings:
-                pair["post_filter_warnings"] = sorted(set(warnings))
+            final_status = "review"
+
+        pair["model_status"] = model_status
+        pair["post_filter_status"] = post_filter_status
+        pair["post_filter_reasons"] = post_filter_reasons
+        pair["final_status"] = final_status
+        pair["selected_for_training"] = final_status == "selected"
+        pair["reject"] = final_status != "selected"
+        pair["reject_reasons"] = post_filter_reasons
+        pair["post_filter_rejected"] = post_filter_status == "fail"
+        if final_status == "review":
+            pair["review_reasons"] = [f"model_status:{model_status}"]
+        else:
+            pair.pop("review_reasons", None)
+        if final_status == "selected":
             valid_pairs.append(pair)
         processed_pairs.append(pair)
 
@@ -969,6 +940,7 @@ def postprocess_annotation(annotation: dict, args) -> tuple[dict, list[dict]]:
         "min_product_logo_text_suitability_score": args.min_product_logo_text_suitability_score,
         "blocked_product_regex": args.blocked_product_regex,
         "reject_target_back_view": args.reject_target_back_view,
+        "reject_complex_targets": args.reject_complex_targets,
         "allow_infographic_pairs": args.allow_infographic_pairs,
         "allow_multi_product_targets": args.allow_multi_product_targets,
         "max_source_product_instance_count": args.max_source_product_instance_count,
@@ -1073,16 +1045,16 @@ def parse_args():
     parser.add_argument("--retries", type=int, default=2)
     parser.add_argument("--workers", type=int, default=1)
     parser.add_argument("--max-pending", type=int, default=0, help="0 means workers * 2.")
-    parser.add_argument("--min-pair-source-score", type=float, default=0.75)
-    parser.add_argument("--min-pair-target-score", type=float, default=0.5)
+    parser.add_argument("--min-pair-source-score", type=float, default=0.0)
+    parser.add_argument("--min-pair-target-score", type=float, default=0.0)
     parser.add_argument("--require-model-high-quality-pair", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--min-pair-quality-score", type=float, default=0.0)
     parser.add_argument("--min-pair-source-quality-score", type=float, default=0.0)
     parser.add_argument("--min-pair-target-quality-score", type=float, default=0.0)
-    parser.add_argument("--min-pair-target-visibility", type=float, default=0.25)
+    parser.add_argument("--min-pair-target-visibility", type=float, default=0.0)
     parser.add_argument("--min-pair-human-target-visibility", type=float, default=0.75, help=argparse.SUPPRESS)
-    parser.add_argument("--min-pair-target-same-confidence", type=float, default=0.85)
-    parser.add_argument("--min-pair-identity-confidence", type=float, default=0.85)
+    parser.add_argument("--min-pair-target-same-confidence", type=float, default=0.0)
+    parser.add_argument("--min-pair-identity-confidence", type=float, default=0.0)
     parser.add_argument("--min-pair-target-aesthetic-score", type=float, default=0.0)
     parser.add_argument("--min-pair-logo-preservation-score", type=float, default=0.0)
     parser.add_argument("--min-pair-small-text-training-score", type=float, default=0.0)
@@ -1091,7 +1063,8 @@ def parse_args():
         "--blocked-product-regex",
         default=r"nail art|nail sticker|sticker|decal|temporary tattoo|water transfer|pattern sheet|flat decorative sheet|swatch-like design",
     )
-    parser.add_argument("--reject-target-back-view", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--reject-target-back-view", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--reject-complex-targets", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--allow-infographic-pairs", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--allow-multi-product-targets", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--max-source-product-instance-count", type=float, default=2)
