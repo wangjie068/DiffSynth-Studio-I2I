@@ -36,10 +36,17 @@ def iter_pair_records(path: Path):
             item.get("image_index"): item
             for item in record.get("source_images", [])
         }
+        image_labels = {
+            item.get("image_index"): item
+            for item in record.get("annotation", {}).get("images", [])
+            if isinstance(item, dict)
+        }
         product = record.get("annotation", {}).get("product", {})
         for index, pair in enumerate(record.get("valid_pairs") or []):
             source = source_images.get(pair.get("source_image_index"), {})
             target = source_images.get(pair.get("target_image_index"), {})
+            source_label = image_labels.get(pair.get("source_image_index"), {})
+            target_label = image_labels.get(pair.get("target_image_index"), {})
             yield {
                 "pair_id": f"{record.get('product_id')}_{index:03d}",
                 "product_id": record.get("product_id"),
@@ -47,6 +54,8 @@ def iter_pair_records(path: Path):
                 "raw_product": record.get("raw_product"),
                 "source_image": source,
                 "target_image": target,
+                "source_image_label": source_label,
+                "target_image_label": target_label,
                 "pair": pair,
                 "edit_instruction": pair.get("edit_instruction", ""),
                 "edit_instruction_detailed": pair.get("edit_instruction_detailed", ""),
@@ -56,6 +65,10 @@ def iter_pair_records(path: Path):
                 "identity_confidence": pair.get("identity_confidence"),
                 "training_value_score": pair.get("training_value_score"),
                 "edit_usefulness_score": pair.get("edit_usefulness_score"),
+                "target_aesthetic_score": target_label.get("aesthetic_score"),
+                "aesthetic_improvement_score": pair.get("aesthetic_improvement_score"),
+                "logo_preservation_score": pair.get("logo_preservation_score"),
+                "logo_preservation": pair.get("logo_preservation"),
                 "small_text_change": pair.get("small_text_change"),
                 "small_text_training_value_score": pair.get("small_text_training_value_score"),
                 "small_text_preservation": pair.get("small_text_preservation"),
@@ -96,6 +109,12 @@ def keep_pair(record, args):
     if as_float(record.get("training_value_score")) < args.min_training_value_score:
         return False
     if as_float(record.get("edit_usefulness_score")) < args.min_edit_usefulness_score:
+        return False
+    if as_float(record.get("target_aesthetic_score")) < args.min_target_aesthetic_score:
+        return False
+    if as_float(record.get("aesthetic_improvement_score")) < args.min_aesthetic_improvement_score:
+        return False
+    if as_float(record.get("logo_preservation_score")) < args.min_logo_preservation_score:
         return False
     return bool(
         record.get("source_url")
@@ -154,6 +173,9 @@ def parse_args():
     parser.add_argument("--min-identity-confidence", type=float, default=0.85)
     parser.add_argument("--min-training-value-score", type=float, default=0.0)
     parser.add_argument("--min-edit-usefulness-score", type=float, default=0.0)
+    parser.add_argument("--min-target-aesthetic-score", type=float, default=0.0)
+    parser.add_argument("--min-aesthetic-improvement-score", type=float, default=0.0)
+    parser.add_argument("--min-logo-preservation-score", type=float, default=0.0)
     return parser.parse_args()
 
 
@@ -196,6 +218,10 @@ def main():
             "identity_confidence": record.get("identity_confidence"),
             "training_value_score": record.get("training_value_score"),
             "edit_usefulness_score": record.get("edit_usefulness_score"),
+            "target_aesthetic_score": record.get("target_aesthetic_score"),
+            "aesthetic_improvement_score": record.get("aesthetic_improvement_score"),
+            "logo_preservation_score": record.get("logo_preservation_score"),
+            "logo_preservation": record.get("logo_preservation"),
             "small_text_change": record.get("small_text_change"),
             "small_text_training_value_score": record.get("small_text_training_value_score"),
             "small_text_preservation": record.get("small_text_preservation"),

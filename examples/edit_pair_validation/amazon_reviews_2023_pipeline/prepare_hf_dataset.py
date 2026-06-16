@@ -28,8 +28,15 @@ def pair_record(product_record: dict, pair: dict, pair_index: int):
         item.get("image_index"): item
         for item in product_record.get("source_images", [])
     }
+    image_labels = {
+        item.get("image_index"): item
+        for item in product_record.get("annotation", {}).get("images", [])
+        if isinstance(item, dict)
+    }
     source = source_images.get(pair.get("source_image_index"), {})
     target = source_images.get(pair.get("target_image_index"), {})
+    source_label = image_labels.get(pair.get("source_image_index"), {})
+    target_label = image_labels.get(pair.get("target_image_index"), {})
     annotation = product_record.get("annotation", {})
     product_labels = annotation.get("product", {})
     return {
@@ -40,6 +47,8 @@ def pair_record(product_record: dict, pair: dict, pair_index: int):
         "raw_product": product_record.get("raw_product"),
         "source_image": source,
         "target_image": target,
+        "source_image_label": source_label,
+        "target_image_label": target_label,
         "pair": pair,
         "edit_instruction": pair.get("edit_instruction", ""),
         "edit_instruction_detailed": pair.get("edit_instruction_detailed", ""),
@@ -49,6 +58,10 @@ def pair_record(product_record: dict, pair: dict, pair_index: int):
         "identity_confidence": pair.get("identity_confidence"),
         "training_value_score": pair.get("training_value_score"),
         "edit_usefulness_score": pair.get("edit_usefulness_score"),
+        "target_aesthetic_score": target_label.get("aesthetic_score"),
+        "aesthetic_improvement_score": pair.get("aesthetic_improvement_score"),
+        "logo_preservation_score": pair.get("logo_preservation_score"),
+        "logo_preservation": pair.get("logo_preservation"),
         "small_text_change": pair.get("small_text_change"),
         "small_text_training_value_score": pair.get("small_text_training_value_score"),
         "small_text_preservation": pair.get("small_text_preservation"),

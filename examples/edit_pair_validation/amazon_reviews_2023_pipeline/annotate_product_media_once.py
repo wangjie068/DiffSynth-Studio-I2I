@@ -38,8 +38,11 @@ Do all annotation in ONE pass:
 - Do not create a valid pair when the target product is cropped, partially hidden, absent, tiny, incidental, or only implied by eyelashes, eyes, skin, ingredients, effects, claims, charts, or before/after examples.
 - Avoid pairs where the target is a pure manual, ingredient panel, size chart, zoomed texture, claim graphic, eye/face close-up ad, before/after panel without a dominant product, or a scene where the product becomes incidental.
 - If the target is dominated by a human face, eye, lips, skin, hand, or body part, reject the pair unless the same product/package remains large, clear, and dominant.
-- The main training goal is small text on product/package/ad images, not bottle shape. Prefer pairs that preserve, move, resize, or add readable small text while keeping the complete product.
+- The main training goal is beautiful product-image editing while preserving the product LOGO, brand marks, package identity, and small text. Prefer pairs that improve layout/aesthetics without changing or corrupting the product identity.
+- Prefer pairs that preserve, move, resize, or add readable small text while keeping the complete product. Do not count bottle shape alone as the goal.
 - Small text means fine product-label text, ingredient/capacity text, warning text, dense package copy, small brand/subtitle text, or small ad callouts. Do not count only large headlines as small text.
+- Reject or down-score pairs where the logo, brand name, key package text, or fine label text is missing, heavily distorted, replaced by a different brand, or visually implausible.
+- A good target should be aesthetically useful: cleaner composition, nicer lighting/background, better ad layout, or more polished product presentation.
 - Keep transformations controlled: low or medium transformation is preferred over high.
 - Videos are not provided to you. Ignore video URLs.
 
@@ -62,6 +65,8 @@ angle_to_ad, bad_or_uncertain
     "product_type": "short noun phrase",
     "form_factor": "bottle/jar/tube/box/pouch/device/accessory/kit/container/card/unknown",
     "brand": "string or unknown",
+    "has_logo_or_brand": true,
+    "logo_or_brand_notes": "visible logo/brand mark evidence and whether it is useful for preservation training",
     "has_small_text": true,
     "small_text_training_potential": "none/low/medium/high",
     "small_text_notes": "where useful small text appears across the product images",
@@ -88,6 +93,9 @@ angle_to_ad, bad_or_uncertain
       "text_density": "none/low/medium/high",
       "has_marketing_text": true,
       "has_logo_or_brand": true,
+      "logo_or_brand_regions": ["package front", "cap", "box front"],
+      "logo_or_brand_legibility": "none/poor/partial/readable",
+      "logo_or_brand_transcription": ["best-effort visible logo or brand text"],
       "has_small_text": true,
       "small_text_density": "none/low/medium/high",
       "small_text_regions": ["package front", "package side", "bottom label", "ad callout"],
@@ -119,19 +127,22 @@ angle_to_ad, bad_or_uncertain
       "edit_difficulty": "easy/medium/hard",
       "edit_usefulness_score": 0.0,
       "training_value_score": 0.0,
+      "aesthetic_improvement_score": 0.0,
+      "logo_preservation_score": 0.0,
       "text_preservation_risk": "low/medium/high",
       "object_change_risk": "low/medium/high",
       "camera_change": "none/angle/zoom/crop/orientation/mixed",
       "background_change": "none/white_to_graphic/white_to_lifestyle/studio_to_lifestyle/other",
       "small_text_change": "preserve_same_text/reposition_text/resize_text/add_marketing_small_text/remove_or_obscure_text/no_small_text/uncertain",
       "small_text_training_value_score": 0.0,
+      "logo_preservation": "what logo, brand wordmark, icon, or package mark should be preserved from source to target",
       "small_text_preservation": "what exact small text, label zones, or typography should be preserved from source to target",
       "small_text_generation": "what new small text or tiny callouts should be generated in the target, if any",
       "reject": false,
       "reject_reasons": [],
       "edit_instruction": "concise image editing instruction from source to target",
-      "edit_instruction_detailed": "detailed instruction describing product preservation, target layout, camera/background changes, visible text, small-text preservation/generation, and what must not change",
-      "preservation_requirements": ["product identity", "brand/logo", "package geometry"]
+      "edit_instruction_detailed": "detailed instruction describing product preservation, target layout, camera/background changes, aesthetic goal, logo/brand preservation, visible text, small-text preservation/generation, and what must not change",
+      "preservation_requirements": ["product identity", "logo/brand", "small label text", "package geometry"]
     }
   ],
   "recommended_pairs_summary": "short summary"
@@ -142,7 +153,9 @@ angle_to_ad, bad_or_uncertain
 - target_candidate_score: high for useful edit target: ad layout, angle change, moderate lifestyle, or informative but not overwhelming infographic.
 - identity_confidence: only high if source and target clearly show the same product/package/model.
 - If the target does not clearly show the product, set identity_confidence <= 0.65 and reject=true.
+- logo_preservation_score: high only when the target keeps the same readable logo/brand mark or clearly preserves the visible package mark.
 - small_text_training_value_score: high when the source/target pair gives useful supervision for preserving or generating readable fine text on the same complete product.
+- aesthetic_improvement_score: high when the target is a more polished, attractive product/ad image while still preserving product identity.
 - Set reject=true when identity is uncertain, transformation is too high, target is unusable, or source is not a good source.
 - recommended_use=train only for images that are clean enough and product-relevant.
 """
@@ -437,7 +450,9 @@ def postprocess_annotation(annotation: dict, args) -> tuple[dict, list[dict]]:
         target_score = as_float(target.get("target_candidate_score"))
         target_visibility = as_float(target.get("main_product_visibility"))
         target_same = as_float(target.get("same_product_confidence"))
+        target_aesthetic = as_float(target.get("aesthetic_score"))
         identity = as_float(pair.get("identity_confidence"))
+        logo_score = as_float(pair.get("logo_preservation_score"))
         small_text_score = as_float(pair.get("small_text_training_value_score"))
         target_role = target.get("role")
         pair_type = pair.get("pair_type")
@@ -457,6 +472,10 @@ def postprocess_annotation(annotation: dict, args) -> tuple[dict, list[dict]]:
             reasons.append(f"target_same_product_confidence<{args.min_pair_target_same_confidence}")
         if identity < args.min_pair_identity_confidence:
             reasons.append(f"pair_identity_confidence<{args.min_pair_identity_confidence}")
+        if target_aesthetic < args.min_pair_target_aesthetic_score:
+            reasons.append(f"target_aesthetic_score<{args.min_pair_target_aesthetic_score}")
+        if logo_score < args.min_pair_logo_preservation_score:
+            reasons.append(f"logo_preservation_score<{args.min_pair_logo_preservation_score}")
         if small_text_score < args.min_pair_small_text_training_score:
             reasons.append(f"small_text_training_value_score<{args.min_pair_small_text_training_score}")
         if target_role in blocked_roles:
@@ -476,6 +495,8 @@ def postprocess_annotation(annotation: dict, args) -> tuple[dict, list[dict]]:
             and identity >= args.high_confidence_override_identity
             and as_float(pair.get("training_value_score")) >= args.high_confidence_override_training_value
             and as_float(pair.get("edit_usefulness_score")) >= args.high_confidence_override_usefulness
+            and target_aesthetic >= args.min_pair_target_aesthetic_score
+            and logo_score >= args.min_pair_logo_preservation_score
             and small_text_score >= args.min_pair_small_text_training_score
             and target_same >= args.min_pair_target_same_confidence
             and target_role not in blocked_roles
@@ -545,6 +566,8 @@ def postprocess_annotation(annotation: dict, args) -> tuple[dict, list[dict]]:
         "min_pair_target_visibility": args.min_pair_target_visibility,
         "min_pair_target_same_confidence": args.min_pair_target_same_confidence,
         "min_pair_identity_confidence": args.min_pair_identity_confidence,
+        "min_pair_target_aesthetic_score": args.min_pair_target_aesthetic_score,
+        "min_pair_logo_preservation_score": args.min_pair_logo_preservation_score,
         "min_pair_small_text_training_score": args.min_pair_small_text_training_score,
         "max_valid_pairs_per_product": args.max_valid_pairs_per_product,
     }
@@ -650,6 +673,8 @@ def parse_args():
     parser.add_argument("--min-pair-human-target-visibility", type=float, default=0.75)
     parser.add_argument("--min-pair-target-same-confidence", type=float, default=0.85)
     parser.add_argument("--min-pair-identity-confidence", type=float, default=0.85)
+    parser.add_argument("--min-pair-target-aesthetic-score", type=float, default=0.0)
+    parser.add_argument("--min-pair-logo-preservation-score", type=float, default=0.0)
     parser.add_argument("--min-pair-small-text-training-score", type=float, default=0.0)
     parser.add_argument("--max-valid-pairs-per-product", type=int, default=0, help="0 means no cap.")
     parser.add_argument("--allow-human-dominant-targets", action="store_true")

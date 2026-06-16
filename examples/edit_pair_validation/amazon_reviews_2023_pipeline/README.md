@@ -55,11 +55,13 @@ Each annotation line keeps:
 - `annotation`: post-processed annotation with `pairs` and `valid_pairs`.
 - `valid_pairs`: pair candidates accepted by rule post-processing.
 
-Small-text annotations are first-class labels. Product records include
-`has_small_text` and `small_text_training_potential`; image records include
-small-text density, regions, legibility, transcription snippets, and risk; pair
-records include small-text change type, preservation/generation notes, detailed
-edit instructions, and `small_text_training_value_score`.
+Logo, small text, and aesthetics are first-class labels. Product records include
+logo/brand notes, `has_small_text`, and `small_text_training_potential`; image
+records include aesthetic score, logo regions/legibility, small-text density,
+regions, legibility, transcription snippets, and risk; pair records include
+logo preservation score, aesthetic improvement score, small-text change type,
+preservation/generation notes, detailed edit instructions, and
+`small_text_training_value_score`.
 
 ## 1. Local Smoke Test
 
@@ -125,7 +127,9 @@ python3 examples/edit_pair_validation/amazon_reviews_2023_pipeline/annotate_prod
   --max-products 100000000 \
   --max-images-per-product 10 \
   --min-images 4 \
+  --min-pair-logo-preservation-score 0.7 \
   --min-pair-small-text-training-score 0.5 \
+  --min-pair-target-aesthetic-score 0.6 \
   --workers 4 \
   --sleep 0.1
 ```
@@ -151,7 +155,9 @@ Notes:
 - `--max-valid-pairs-per-product 0` is the default and means no cap.
 - The model is still instructed to select useful pairs only, not all combinations.
 - A valid pair requires the target image to contain the complete same product/package as the source image. Partial eye/skin/detail/claim graphics are retained with reject reasons, not used as valid pairs.
+- `--min-pair-logo-preservation-score 0.7` makes `valid_pairs` focus on pairs where the product logo/brand mark remains usable.
 - `--min-pair-small-text-training-score 0.5` makes `valid_pairs` focus on useful small-text supervision. Leave it at `0.0` if you want to keep non-small-text valid pairs and filter later.
+- `--min-pair-target-aesthetic-score 0.6` keeps targets visually polished enough for product/ad training.
 - Existing output is resumable; without `--overwrite`, already annotated ASINs are skipped.
 - For multiple API keys, set `GPT_API_KEYS=key1,key2` in `.env`, or pass `--api-keys 'key1,key2'`.
 - `--workers` controls concurrent product-level model calls. Keep it no larger than your key/rate-limit capacity.
@@ -201,6 +207,9 @@ python3 examples/edit_pair_validation/amazon_reviews_2023_pipeline/convert_to_qw
   --output-dir data/amazon_reviews_2023/qwen_image_edit_train \
   --small-text-only \
   --min-small-text-training-score 0.5 \
+  --min-logo-preservation-score 0.7 \
+  --min-target-aesthetic-score 0.6 \
+  --min-aesthetic-improvement-score 0.4 \
   --max-transformation medium \
   --min-identity-confidence 0.85 \
   --min-training-value-score 0.0 \
@@ -234,7 +243,10 @@ For high precision training data:
 - `pair_type in main_to_ad, main_to_angle, main_to_lifestyle, angle_to_ad`
 - `transformation_magnitude in low, medium`
 - `identity_confidence >= 0.85`
+- `logo_preservation_score >= 0.7`
 - `small_text_training_value_score >= 0.5`
+- `target_aesthetic_score >= 0.6`
+- `aesthetic_improvement_score >= 0.4`
 - `target.full_product_visible == true`
 - `annotation.images[*].small_text_legibility in partial/readable` for manual inspection subsets.
 
