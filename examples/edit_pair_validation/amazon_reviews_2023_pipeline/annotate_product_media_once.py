@@ -51,6 +51,7 @@ Do all annotation in ONE pass:
 - A good target should be aesthetically useful: cleaner composition, nicer lighting/background, better ad layout, or more polished product presentation.
 - Description fields must be specific and sufficient. Avoid generic one-line descriptions; include product placement, background/layout, logo/brand evidence, small-text regions, aesthetic qualities, and any visible risks.
 - Be strict when judging high-quality pairs. A high-quality pair must have a good source, a visually polished target, complete same product, no front-to-back view change, preserved logo/brand identity, useful small-text supervision, and a detailed actionable instruction. If any of these are weak, set is_high_quality_pair=false and explain why.
+- Do not select complex reconstruction targets: no multi-panel collage, no multi-view product grid, no color/variant comparison chart, no swatch board, and no target containing many duplicated product instances. The target should be one coherent polished product image/ad scene, not a product-detail infographic page.
 - Keep transformations controlled: low or medium transformation is preferred over high.
 - Videos are not provided to you. Ignore video URLs.
 
@@ -121,6 +122,9 @@ angle_to_ad, bad_or_uncertain
       "main_product_visibility": 0.0,
       "background_type": "white/transparent/studio/lifestyle/graphic/cluttered/unknown",
       "layout_type": "single_product/product_with_props/multi_panel/collage/text_heavy_ad/unknown",
+      "layout_complexity": "simple/moderate/complex",
+      "has_multiple_product_views": false,
+      "has_color_or_variant_swatches": false,
       "text_density": "none/low/medium/high",
       "has_marketing_text": true,
       "has_logo_or_brand": true,
@@ -148,6 +152,7 @@ angle_to_ad, bad_or_uncertain
       "has_face": false,
       "has_hand": false,
       "has_multiple_products": false,
+      "product_instance_count": 1,
       "is_bundle_or_set": false,
       "is_closeup": false,
       "is_instructional": false,
@@ -170,6 +175,7 @@ angle_to_ad, bad_or_uncertain
       "pair_failure_modes": ["front_to_back_view_change", "weak_logo_preservation", "low_aesthetic_value"],
       "identity_confidence": 0.0,
       "transformation_magnitude": "low/medium/high",
+      "edit_scope_complexity": "simple/moderate/complex",
       "edit_difficulty": "easy/medium/hard",
       "edit_usefulness_score": 0.0,
       "training_value_score": 0.0,
@@ -550,6 +556,51 @@ def target_is_back_view(target: dict, pair: dict) -> bool:
     ))
 
 
+def target_complexity_reasons(target: dict, pair: dict, args) -> list[str]:
+    reasons = []
+    layout_type = str(target.get("layout_type") or "").lower()
+    layout_complexity = str(target.get("layout_complexity") or "").lower()
+    edit_scope = str(pair.get("edit_scope_complexity") or "").lower()
+    pair_type = str(pair.get("pair_type") or "").lower()
+    product_count = as_float(target.get("product_instance_count"), 1.0)
+    descriptive_text = " ".join(
+        str(value or "")
+        for value in [
+            target.get("detailed_description"),
+            target.get("target_edit_description"),
+            target.get("product_identity_description"),
+            pair.get("edit_instruction"),
+            pair.get("edit_instruction_detailed"),
+            pair.get("pair_quality_judgement"),
+        ]
+    )
+    if not args.allow_infographic_pairs and pair_type == "main_to_infographic":
+        reasons.append("blocked_pair_type:main_to_infographic")
+    if layout_type in {"multi_panel", "collage"}:
+        reasons.append(f"blocked_target_layout:{layout_type}")
+    if layout_complexity == "complex":
+        reasons.append("target_layout_complexity:complex")
+    if edit_scope == "complex":
+        reasons.append("edit_scope_complexity:complex")
+    if not args.allow_multi_product_targets and as_bool(target.get("has_multiple_products")):
+        reasons.append("target_has_multiple_products")
+    if not args.allow_multi_product_targets and product_count > args.max_target_product_instance_count:
+        reasons.append(f"target_product_instance_count>{args.max_target_product_instance_count}")
+    if as_bool(target.get("has_multiple_product_views")):
+        reasons.append("target_has_multiple_product_views")
+    if as_bool(target.get("has_color_or_variant_swatches")):
+        reasons.append("target_has_color_or_variant_swatches")
+    if re.search(
+        r"\b(multi[- ]?panel|collage|multiple views?|multi[- ]?view|variant comparison|color comparison|"
+        r"swatches?|swatch board|shade chart|color chart|product grid|grid of|several product views|"
+        r"multiple copies|duplicated bottles|comparison chart)\b",
+        descriptive_text,
+        re.I,
+    ):
+        reasons.append("target_complex_collage_or_variant_layout")
+    return reasons
+
+
 def postprocess_annotation(annotation: dict, args) -> tuple[dict, list[dict]]:
     images = {
         image.get("image_index"): image
@@ -571,11 +622,12 @@ def postprocess_annotation(annotation: dict, args) -> tuple[dict, list[dict]]:
         "main_to_ad",
         "main_to_angle",
         "main_to_lifestyle",
-        "main_to_infographic",
         "main_to_detail",
         "angle_to_ad",
         "bad_or_uncertain",
     }
+    if args.allow_infographic_pairs:
+        allowed_pair_types.add("main_to_infographic")
     product_reasons = product_reject_reasons(annotation, args)
     for pair in annotation.get("pairs", []):
         if not isinstance(pair, dict):
@@ -661,6 +713,7 @@ def postprocess_annotation(annotation: dict, args) -> tuple[dict, list[dict]]:
             reasons.append(f"target_small_text_ocr_chars<{args.min_target_small_text_ocr_chars}")
         if args.reject_target_back_view and target_is_back_view(target, pair):
             reasons.append("target_back_or_rear_view_not_allowed")
+        reasons.extend(target_complexity_reasons(target, pair, args))
         if target_role in blocked_roles:
             reasons.append(f"blocked_target_role:{target_role}")
         if pair.get("transformation_magnitude") == "high":
@@ -690,6 +743,7 @@ def postprocess_annotation(annotation: dict, args) -> tuple[dict, list[dict]]:
             and small_text_preservation_chars >= args.min_pair_small_text_preservation_chars
             and target_small_text_ocr_chars >= args.min_target_small_text_ocr_chars
             and (not args.reject_target_back_view or not target_is_back_view(target, pair))
+            and not target_complexity_reasons(target, pair, args)
             and target_same >= args.min_pair_target_same_confidence
             and target_role not in blocked_roles
             and pair.get("transformation_magnitude") != "high"
@@ -769,6 +823,9 @@ def postprocess_annotation(annotation: dict, args) -> tuple[dict, list[dict]]:
         "min_product_logo_text_suitability_score": args.min_product_logo_text_suitability_score,
         "blocked_product_regex": args.blocked_product_regex,
         "reject_target_back_view": args.reject_target_back_view,
+        "allow_infographic_pairs": args.allow_infographic_pairs,
+        "allow_multi_product_targets": args.allow_multi_product_targets,
+        "max_target_product_instance_count": args.max_target_product_instance_count,
         "require_selected_main_source": args.require_selected_main_source,
         "selected_main_source_image_index": selected_source_index,
         "max_valid_pairs_per_product": args.max_valid_pairs_per_product,
@@ -888,6 +945,9 @@ def parse_args():
         default=r"nail art|nail sticker|sticker|decal|temporary tattoo|water transfer|pattern sheet|flat decorative sheet|swatch-like design",
     )
     parser.add_argument("--reject-target-back-view", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--allow-infographic-pairs", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--allow-multi-product-targets", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--max-target-product-instance-count", type=float, default=1)
     parser.add_argument("--min-image-detailed-description-chars", type=int, default=0)
     parser.add_argument("--min-product-identity-description-chars", type=int, default=0)
     parser.add_argument("--min-pair-detailed-instruction-chars", type=int, default=0)
