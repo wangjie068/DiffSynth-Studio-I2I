@@ -63,6 +63,11 @@ def iter_pair_records(path: Path):
                 "source_url": source.get("fpath"),
                 "target_url": target.get("fpath"),
                 "pair_type": pair.get("pair_type"),
+                "is_high_quality_pair": pair.get("is_high_quality_pair"),
+                "pair_quality_score": pair.get("pair_quality_score"),
+                "pair_quality_tier": pair.get("pair_quality_tier"),
+                "pair_quality_judgement": pair.get("pair_quality_judgement"),
+                "pair_failure_modes": pair.get("pair_failure_modes", []),
                 "identity_confidence": pair.get("identity_confidence"),
                 "training_value_score": pair.get("training_value_score"),
                 "edit_usefulness_score": pair.get("edit_usefulness_score"),
@@ -118,6 +123,10 @@ def keep_pair(record, args):
         return False
     if args.small_text_only and as_float(record.get("small_text_training_value_score")) < args.min_small_text_training_score:
         return False
+    if args.require_model_high_quality_pair and record.get("is_high_quality_pair") is not True:
+        return False
+    if as_float(record.get("pair_quality_score")) < args.min_pair_quality_score:
+        return False
     if args.pair_type_regex and not re.search(args.pair_type_regex, str(record.get("pair_type") or ""), re.I):
         return False
     if args.product_domain_regex and not re.search(args.product_domain_regex, str(product.get("domain") or ""), re.I):
@@ -156,9 +165,7 @@ def keep_pair(record, args):
         return False
     if text_len(record.get("small_text_preservation")) < args.min_small_text_preservation_chars:
         return False
-    if small_text_ocr_len(source_label) < args.min_image_small_text_ocr_chars:
-        return False
-    if small_text_ocr_len(target_label) < args.min_image_small_text_ocr_chars:
+    if small_text_ocr_len(target_label) < args.min_target_small_text_ocr_chars:
         return False
     return bool(
         record.get("source_url")
@@ -211,6 +218,8 @@ def parse_args():
     parser.add_argument("--bottle-like-only", action="store_true")
     parser.add_argument("--small-text-only", action="store_true")
     parser.add_argument("--min-small-text-training-score", type=float, default=0.5)
+    parser.add_argument("--require-model-high-quality-pair", action="store_true")
+    parser.add_argument("--min-pair-quality-score", type=float, default=0.0)
     parser.add_argument("--pair-type-regex", default="main_to_ad|main_to_angle|main_to_lifestyle|angle_to_ad")
     parser.add_argument("--product-domain-regex", default="")
     parser.add_argument("--max-transformation", choices=["low", "medium", "high"], default="medium")
@@ -227,7 +236,13 @@ def parse_args():
     parser.add_argument("--min-prompt-chars", type=int, default=0)
     parser.add_argument("--min-logo-preservation-chars", type=int, default=0)
     parser.add_argument("--min-small-text-preservation-chars", type=int, default=0)
-    parser.add_argument("--min-image-small-text-ocr-chars", type=int, default=0)
+    parser.add_argument(
+        "--min-target-small-text-ocr-chars",
+        "--min-image-small-text-ocr-chars",
+        dest="min_target_small_text_ocr_chars",
+        type=int,
+        default=0,
+    )
     return parser.parse_args()
 
 
@@ -268,6 +283,11 @@ def main():
             "pair_id": record.get("pair_id"),
             "pair_type": record.get("pair_type"),
             "source_selection": record.get("source_selection"),
+            "is_high_quality_pair": record.get("is_high_quality_pair"),
+            "pair_quality_score": record.get("pair_quality_score"),
+            "pair_quality_tier": record.get("pair_quality_tier"),
+            "pair_quality_judgement": record.get("pair_quality_judgement"),
+            "pair_failure_modes": record.get("pair_failure_modes"),
             "identity_confidence": record.get("identity_confidence"),
             "training_value_score": record.get("training_value_score"),
             "edit_usefulness_score": record.get("edit_usefulness_score"),

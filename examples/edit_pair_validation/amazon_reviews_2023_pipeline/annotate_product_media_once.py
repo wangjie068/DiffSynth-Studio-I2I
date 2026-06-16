@@ -27,8 +27,9 @@ Do all annotation in ONE pass:
 1. Understand the product.
 2. Label each image role, quality, logo/brand evidence, and small-text OCR properties.
 3. Explicitly choose the best main source image. Do not assume Amazon's MAIN variant is automatically the source.
-4. Select all useful image-edit pair candidates without forcing a fixed count.
-5. Write detailed edit instructions for the selected pairs.
+4. Judge whether each candidate is truly high-quality training data.
+5. Select all useful image-edit pair candidates without forcing a fixed count.
+6. Write detailed edit instructions for the selected pairs.
 
 # Important Constraints
 - The input images are supposed to belong to the same product, but some may show bundles, details, charts, or unrelated accessories. Do not assume all are equally useful.
@@ -37,16 +38,19 @@ Do all annotation in ONE pass:
 - Prefer a clean complete product/source image to a moderate target image, but explicitly select it by image_index. Amazon's variant=MAIN is only a hint, not a decision.
 - A valid target image MUST contain the complete same physical product/package/model from the source image. The product can be recomposed into an ad/lifestyle/graphic layout, but the full saleable product must remain visible as a clear primary subject.
 - Do not create a valid pair when the target product is cropped, partially hidden, absent, tiny, incidental, or only implied by eyelashes, eyes, skin, ingredients, effects, claims, charts, or before/after examples.
-- Avoid pairs where the target is a pure manual, ingredient panel, size chart, zoomed texture, claim graphic, eye/face close-up ad, before/after panel without a dominant product, or a scene where the product becomes incidental.
-- If the target is dominated by a human face, eye, lips, skin, hand, or body part, reject the pair unless the same product/package remains large, clear, and dominant.
+- Avoid pairs where the target is a pure manual, ingredient panel, size chart, zoomed texture, claim graphic, before/after panel without a dominant product, or a scene where the product becomes incidental.
+- Humans, faces, or hands are allowed when the complete product remains clearly visible and product-dominant. Do not reject a pair only because a person appears.
 - Keep previous consistency requirements: source and target must be the same product/variant/package, with no brand swap, no product identity drift, no missing full product, no high transformation, and no target where the product is incidental.
+- Do not select front-to-back or front-to-rear-view edits. A valid target should preserve the same usable front/logo/small-text surface, not turn a front package shot into a back-label or rear-panel product view.
 - The main training goal is beautiful product-image editing while preserving the product LOGO, brand marks, package identity, and small text. Prefer pairs that improve layout/aesthetics without changing or corrupting the product identity.
 - Prefer pairs that preserve, move, resize, or add readable small text while keeping the complete product. Do not count bottle shape alone as the goal.
 - Small text means fine product-label text, ingredient/capacity text, warning text, dense package copy, small brand/subtitle text, or small ad callouts. Do not count only large headlines as small text.
 - OCR small text explicitly. Use best-effort transcription only for visible text. If a region is unreadable, write "[unreadable]" and mark low confidence instead of hallucinating.
+- Exclude products that are themselves flat decorative sheets, nail-art sticker/decal sheets, temporary tattoo sheets, pattern sheets, or swatch-like design collections. These do not provide stable product LOGO/package text preservation training.
 - Reject or down-score pairs where the logo, brand name, key package text, or fine label text is missing, heavily distorted, replaced by a different brand, or visually implausible.
 - A good target should be aesthetically useful: cleaner composition, nicer lighting/background, better ad layout, or more polished product presentation.
 - Description fields must be specific and sufficient. Avoid generic one-line descriptions; include product placement, background/layout, logo/brand evidence, small-text regions, aesthetic qualities, and any visible risks.
+- Be strict when judging high-quality pairs. A high-quality pair must have a good source, a visually polished target, complete same product, no front-to-back view change, preserved logo/brand identity, useful small-text supervision, and a detailed actionable instruction. If any of these are weak, set is_high_quality_pair=false and explain why.
 - Keep transformations controlled: low or medium transformation is preferred over high.
 - Videos are not provided to you. Ignore video URLs.
 
@@ -74,6 +78,12 @@ angle_to_ad, bad_or_uncertain
     "has_small_text": true,
     "small_text_training_potential": "none/low/medium/high",
     "small_text_notes": "where useful small text appears across the product images",
+    "is_suitable_logo_text_product": true,
+    "logo_text_product_suitability_score": 0.0,
+    "product_quality_for_training_score": 0.0,
+    "product_quality_judgement": "why this product is or is not suitable for high-quality logo/small-text/aesthetic product editing training",
+    "is_flat_decorative_sheet_or_sticker": false,
+    "unsuitable_product_reasons": [],
     "usable_for_i2i": true,
     "product_consistency_risk": "low/medium/high",
     "notes": "short reason"
@@ -106,6 +116,7 @@ angle_to_ad, bad_or_uncertain
       "target_candidate_score": 0.0,
       "quality_score": 0.0,
       "aesthetic_score": 0.0,
+      "product_view": "front/back/side/angled_front/top/multi_view/unknown",
       "full_product_visible": true,
       "main_product_visibility": 0.0,
       "background_type": "white/transparent/studio/lifestyle/graphic/cluttered/unknown",
@@ -152,6 +163,11 @@ angle_to_ad, bad_or_uncertain
       "source_image_index": 0,
       "target_image_index": 1,
       "pair_type": "main_to_ad",
+      "is_high_quality_pair": true,
+      "pair_quality_score": 0.0,
+      "pair_quality_tier": "excellent/good/borderline/bad",
+      "pair_quality_judgement": "strict judgement of whether this pair should be used for training, covering source quality, target aesthetics, product consistency, logo/small-text preservation, view consistency, and instruction quality",
+      "pair_failure_modes": ["front_to_back_view_change", "weak_logo_preservation", "low_aesthetic_value"],
       "identity_confidence": 0.0,
       "transformation_magnitude": "low/medium/high",
       "edit_difficulty": "easy/medium/hard",
@@ -162,6 +178,7 @@ angle_to_ad, bad_or_uncertain
       "text_preservation_risk": "low/medium/high",
       "object_change_risk": "low/medium/high",
       "camera_change": "none/angle/zoom/crop/orientation/mixed",
+      "view_change": "same_front/front_to_angle/front_to_side/front_to_back/back_to_front/multi_view/uncertain",
       "background_change": "none/white_to_graphic/white_to_lifestyle/studio_to_lifestyle/other",
       "small_text_change": "preserve_same_text/reposition_text/resize_text/add_marketing_small_text/remove_or_obscure_text/no_small_text/uncertain",
       "small_text_training_value_score": 0.0,
@@ -181,6 +198,7 @@ angle_to_ad, bad_or_uncertain
 # Scoring Guide
 - source_candidate_score: high for a clean complete product image suitable as source.
 - target_candidate_score: high for useful edit target: ad layout, angle change, moderate lifestyle, or informative but not overwhelming infographic.
+- pair_quality_score: strict overall training quality. Use >=0.8 only for excellent pairs, 0.7-0.8 for good pairs, 0.5-0.7 for borderline review-only pairs, and <0.5 for bad pairs.
 - identity_confidence: only high if source and target clearly show the same product/package/model.
 - If the target does not clearly show the product, set identity_confidence <= 0.65 and reject=true.
 - logo_preservation_score: high only when the target keeps the same readable logo/brand mark or clearly preserves the visible package mark.
@@ -475,6 +493,63 @@ def selected_main_source_index(annotation: dict):
     return None
 
 
+def product_text(product: dict) -> str:
+    fields = [
+        product.get("product_type"),
+        product.get("form_factor"),
+        product.get("brand"),
+        product.get("logo_or_brand_notes"),
+        product.get("small_text_notes"),
+        product.get("notes"),
+    ]
+    reasons = product.get("unsuitable_product_reasons") or []
+    fields.extend(str(reason) for reason in reasons)
+    return " ".join(str(field or "") for field in fields)
+
+
+def product_reject_reasons(annotation: dict, args) -> list[str]:
+    product = annotation.get("product") or {}
+    reasons = []
+    if as_bool(product.get("is_flat_decorative_sheet_or_sticker")):
+        reasons.append("blocked_product_type:flat_decorative_sheet_or_sticker")
+    if product.get("is_suitable_logo_text_product") is False:
+        reasons.append("unsuitable_logo_text_product")
+    suitability = product.get("logo_text_product_suitability_score")
+    if suitability is not None and as_float(suitability, 1.0) < args.min_product_logo_text_suitability_score:
+        reasons.append(f"logo_text_product_suitability_score<{args.min_product_logo_text_suitability_score}")
+    if args.blocked_product_regex:
+        match = re.search(args.blocked_product_regex, product_text(product), re.I)
+        if match:
+            reasons.append(f"blocked_product_type:{match.group(0)}")
+    return reasons
+
+
+def target_is_back_view(target: dict, pair: dict) -> bool:
+    target_view = str(target.get("product_view") or target.get("view_orientation") or "").lower()
+    pair_view = str(pair.get("view_change") or "").lower()
+    if target_view in {"back", "rear", "reverse", "back_view", "rear_view"}:
+        return True
+    if pair_view in {"front_to_back", "front_to_rear", "front_to_reverse"}:
+        return True
+    descriptive_text = " ".join(
+        str(value or "")
+        for value in [
+            target.get("detailed_description"),
+            target.get("product_identity_description"),
+            target.get("target_edit_description"),
+            pair.get("edit_instruction"),
+            pair.get("edit_instruction_detailed"),
+            pair.get("logo_preservation"),
+            pair.get("small_text_preservation"),
+        ]
+    )
+    return bool(re.search(
+        r"\b(side/back|back[- ]?(view|label|panel|side|facing)|rear[- ]?(view|label|panel)|reverse[- ]?(view|side))\b",
+        descriptive_text,
+        re.I,
+    ))
+
+
 def postprocess_annotation(annotation: dict, args) -> tuple[dict, list[dict]]:
     images = {
         image.get("image_index"): image
@@ -501,6 +576,7 @@ def postprocess_annotation(annotation: dict, args) -> tuple[dict, list[dict]]:
         "angle_to_ad",
         "bad_or_uncertain",
     }
+    product_reasons = product_reject_reasons(annotation, args)
     for pair in annotation.get("pairs", []):
         if not isinstance(pair, dict):
             continue
@@ -517,6 +593,7 @@ def postprocess_annotation(annotation: dict, args) -> tuple[dict, list[dict]]:
         target_same = as_float(target.get("same_product_confidence"))
         target_aesthetic = as_float(target.get("aesthetic_score"))
         identity = as_float(pair.get("identity_confidence"))
+        pair_quality = as_float(pair.get("pair_quality_score"))
         logo_score = as_float(pair.get("logo_preservation_score"))
         small_text_score = as_float(pair.get("small_text_training_value_score"))
         target_role = target.get("role")
@@ -534,6 +611,11 @@ def postprocess_annotation(annotation: dict, args) -> tuple[dict, list[dict]]:
 
         if pair_type not in allowed_pair_types:
             reasons.append(f"unknown_pair_type:{pair_type}")
+        reasons.extend(product_reasons)
+        if args.require_model_high_quality_pair and pair.get("is_high_quality_pair") is not True:
+            reasons.append("model_judged_not_high_quality_pair")
+        if pair_quality < args.min_pair_quality_score:
+            reasons.append(f"pair_quality_score<{args.min_pair_quality_score}")
         if args.require_selected_main_source:
             if selected_source_index is None:
                 reasons.append("missing_selected_main_source")
@@ -575,24 +657,21 @@ def postprocess_annotation(annotation: dict, args) -> tuple[dict, list[dict]]:
             reasons.append(f"logo_preservation_chars<{args.min_pair_logo_preservation_chars}")
         if small_text_preservation_chars < args.min_pair_small_text_preservation_chars:
             reasons.append(f"small_text_preservation_chars<{args.min_pair_small_text_preservation_chars}")
-        if source_small_text_ocr_chars < args.min_image_small_text_ocr_chars:
-            reasons.append(f"source_small_text_ocr_chars<{args.min_image_small_text_ocr_chars}")
-        if target_small_text_ocr_chars < args.min_image_small_text_ocr_chars:
-            reasons.append(f"target_small_text_ocr_chars<{args.min_image_small_text_ocr_chars}")
+        if target_small_text_ocr_chars < args.min_target_small_text_ocr_chars:
+            reasons.append(f"target_small_text_ocr_chars<{args.min_target_small_text_ocr_chars}")
+        if args.reject_target_back_view and target_is_back_view(target, pair):
+            reasons.append("target_back_or_rear_view_not_allowed")
         if target_role in blocked_roles:
             reasons.append(f"blocked_target_role:{target_role}")
-        if (
-            not args.allow_human_dominant_targets
-            and (target.get("has_face") or target.get("has_human"))
-            and target_visibility < args.min_pair_human_target_visibility
-        ):
-            reasons.append(f"human_or_face_dominant_target_visibility<{args.min_pair_human_target_visibility}")
         if pair.get("transformation_magnitude") == "high":
             reasons.append("high_transformation_magnitude")
 
         warnings = []
         high_confidence_override = (
             pair.get("pair_type") in {"main_to_ad", "main_to_angle", "main_to_lifestyle", "angle_to_ad"}
+            and not product_reasons
+            and (not args.require_model_high_quality_pair or pair.get("is_high_quality_pair") is True)
+            and pair_quality >= args.min_pair_quality_score
             and (not args.require_selected_main_source or pair.get("source_image_index") == selected_source_index)
             and identity >= args.high_confidence_override_identity
             and as_float(pair.get("training_value_score")) >= args.high_confidence_override_training_value
@@ -609,15 +688,10 @@ def postprocess_annotation(annotation: dict, args) -> tuple[dict, list[dict]]:
             and detailed_instruction_chars >= args.min_pair_detailed_instruction_chars
             and logo_preservation_chars >= args.min_pair_logo_preservation_chars
             and small_text_preservation_chars >= args.min_pair_small_text_preservation_chars
-            and source_small_text_ocr_chars >= args.min_image_small_text_ocr_chars
-            and target_small_text_ocr_chars >= args.min_image_small_text_ocr_chars
+            and target_small_text_ocr_chars >= args.min_target_small_text_ocr_chars
+            and (not args.reject_target_back_view or not target_is_back_view(target, pair))
             and target_same >= args.min_pair_target_same_confidence
             and target_role not in blocked_roles
-            and not (
-                not args.allow_human_dominant_targets
-                and (target.get("has_face") or target.get("has_human"))
-                and target_visibility < args.min_pair_human_target_visibility
-            )
             and pair.get("transformation_magnitude") != "high"
         )
         if high_confidence_override:
@@ -676,6 +750,8 @@ def postprocess_annotation(annotation: dict, args) -> tuple[dict, list[dict]]:
     annotation["postprocess_policy"] = {
         "min_pair_source_score": args.min_pair_source_score,
         "min_pair_target_score": args.min_pair_target_score,
+        "require_model_high_quality_pair": args.require_model_high_quality_pair,
+        "min_pair_quality_score": args.min_pair_quality_score,
         "min_pair_source_quality_score": args.min_pair_source_quality_score,
         "min_pair_target_quality_score": args.min_pair_target_quality_score,
         "min_pair_target_visibility": args.min_pair_target_visibility,
@@ -689,7 +765,10 @@ def postprocess_annotation(annotation: dict, args) -> tuple[dict, list[dict]]:
         "min_pair_detailed_instruction_chars": args.min_pair_detailed_instruction_chars,
         "min_pair_logo_preservation_chars": args.min_pair_logo_preservation_chars,
         "min_pair_small_text_preservation_chars": args.min_pair_small_text_preservation_chars,
-        "min_image_small_text_ocr_chars": args.min_image_small_text_ocr_chars,
+        "min_target_small_text_ocr_chars": args.min_target_small_text_ocr_chars,
+        "min_product_logo_text_suitability_score": args.min_product_logo_text_suitability_score,
+        "blocked_product_regex": args.blocked_product_regex,
+        "reject_target_back_view": args.reject_target_back_view,
         "require_selected_main_source": args.require_selected_main_source,
         "selected_main_source_image_index": selected_source_index,
         "max_valid_pairs_per_product": args.max_valid_pairs_per_product,
@@ -792,24 +871,38 @@ def parse_args():
     parser.add_argument("--max-pending", type=int, default=0, help="0 means workers * 2.")
     parser.add_argument("--min-pair-source-score", type=float, default=0.75)
     parser.add_argument("--min-pair-target-score", type=float, default=0.5)
+    parser.add_argument("--require-model-high-quality-pair", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--min-pair-quality-score", type=float, default=0.0)
     parser.add_argument("--min-pair-source-quality-score", type=float, default=0.0)
     parser.add_argument("--min-pair-target-quality-score", type=float, default=0.0)
     parser.add_argument("--min-pair-target-visibility", type=float, default=0.25)
-    parser.add_argument("--min-pair-human-target-visibility", type=float, default=0.75)
+    parser.add_argument("--min-pair-human-target-visibility", type=float, default=0.75, help=argparse.SUPPRESS)
     parser.add_argument("--min-pair-target-same-confidence", type=float, default=0.85)
     parser.add_argument("--min-pair-identity-confidence", type=float, default=0.85)
     parser.add_argument("--min-pair-target-aesthetic-score", type=float, default=0.0)
     parser.add_argument("--min-pair-logo-preservation-score", type=float, default=0.0)
     parser.add_argument("--min-pair-small-text-training-score", type=float, default=0.0)
+    parser.add_argument("--min-product-logo-text-suitability-score", type=float, default=0.0)
+    parser.add_argument(
+        "--blocked-product-regex",
+        default=r"nail art|nail sticker|sticker|decal|temporary tattoo|water transfer|pattern sheet|flat decorative sheet|swatch-like design",
+    )
+    parser.add_argument("--reject-target-back-view", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--min-image-detailed-description-chars", type=int, default=0)
     parser.add_argument("--min-product-identity-description-chars", type=int, default=0)
     parser.add_argument("--min-pair-detailed-instruction-chars", type=int, default=0)
     parser.add_argument("--min-pair-logo-preservation-chars", type=int, default=0)
     parser.add_argument("--min-pair-small-text-preservation-chars", type=int, default=0)
-    parser.add_argument("--min-image-small-text-ocr-chars", type=int, default=0)
+    parser.add_argument(
+        "--min-target-small-text-ocr-chars",
+        "--min-image-small-text-ocr-chars",
+        dest="min_target_small_text_ocr_chars",
+        type=int,
+        default=0,
+    )
     parser.add_argument("--require-selected-main-source", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--max-valid-pairs-per-product", type=int, default=0, help="0 means no cap.")
-    parser.add_argument("--allow-human-dominant-targets", action="store_true")
+    parser.add_argument("--allow-human-dominant-targets", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--high-confidence-override-identity", type=float, default=0.9)
     parser.add_argument("--high-confidence-override-training-value", type=float, default=0.7)
     parser.add_argument("--high-confidence-override-usefulness", type=float, default=0.7)

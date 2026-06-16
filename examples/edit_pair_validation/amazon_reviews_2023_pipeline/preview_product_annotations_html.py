@@ -109,6 +109,8 @@ def pair_card(pair: dict, source_item: dict, target_item: dict, source_label: di
         <div class="metrics">
           {metric("type", pair.get("pair_type"))}
           {metric("identity", pair.get("identity_confidence"))}
+          {metric("quality", pair.get("pair_quality_score"))}
+          {metric("tier", pair.get("pair_quality_tier"))}
           {metric("logo", pair.get("logo_preservation_score"))}
           {metric("small", pair.get("small_text_training_value_score"))}
           {metric("target A", target_label.get("aesthetic_score"))}
@@ -127,6 +129,8 @@ def pair_card(pair: dict, source_item: dict, target_item: dict, source_label: di
         </div>
       </div>
       {'<p class="reject"><b>reject reasons</b><br>' + esc(", ".join(reasons)) + '</p>' if reasons else ''}
+      <p><b>model quality judgement</b><br>{esc(pair.get("pair_quality_judgement"))}</p>
+      <p><b>failure modes</b><br>{esc(pair.get("pair_failure_modes"))}</p>
       <p><b>instruction</b><br>{esc(pair.get("edit_instruction"))}</p>
       <p><b>detailed instruction</b><br>{esc(pair.get("edit_instruction_detailed"))}</p>
       <p><b>logo preservation</b><br>{esc(pair.get("logo_preservation"))}</p>
