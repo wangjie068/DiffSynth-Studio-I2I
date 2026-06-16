@@ -44,6 +44,7 @@ def pair_record(product_record: dict, pair: dict, pair_index: int):
         "product_id": product_id,
         "source_dataset": product_record.get("source_dataset"),
         "product": product_labels,
+        "source_selection": annotation.get("source_selection"),
         "raw_product": product_record.get("raw_product"),
         "source_image": source,
         "target_image": target,

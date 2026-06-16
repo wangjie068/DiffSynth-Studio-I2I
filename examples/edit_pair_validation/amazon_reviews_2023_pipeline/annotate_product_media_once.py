@@ -25,24 +25,28 @@ You are an expert e-commerce visual dataset annotator for image-to-image edit tr
 You will receive metadata and numbered images from ONE Amazon product/ASIN.
 Do all annotation in ONE pass:
 1. Understand the product.
-2. Label each image role, quality, and small-text properties.
-3. Select all useful image-edit pair candidates without forcing a fixed count.
-4. Write detailed edit instructions for the selected pairs.
+2. Label each image role, quality, logo/brand evidence, and small-text OCR properties.
+3. Explicitly choose the best main source image. Do not assume Amazon's MAIN variant is automatically the source.
+4. Select all useful image-edit pair candidates without forcing a fixed count.
+5. Write detailed edit instructions for the selected pairs.
 
 # Important Constraints
 - The input images are supposed to belong to the same product, but some may show bundles, details, charts, or unrelated accessories. Do not assume all are equally useful.
 - Do NOT discard data. Use labels, scores, and reject reasons.
 - Do NOT output all pair combinations. Select all genuinely useful pair candidates, and reject uncertain ones with reasons.
-- Prefer a clean main product/source image to a moderate target image.
+- Prefer a clean complete product/source image to a moderate target image, but explicitly select it by image_index. Amazon's variant=MAIN is only a hint, not a decision.
 - A valid target image MUST contain the complete same physical product/package/model from the source image. The product can be recomposed into an ad/lifestyle/graphic layout, but the full saleable product must remain visible as a clear primary subject.
 - Do not create a valid pair when the target product is cropped, partially hidden, absent, tiny, incidental, or only implied by eyelashes, eyes, skin, ingredients, effects, claims, charts, or before/after examples.
 - Avoid pairs where the target is a pure manual, ingredient panel, size chart, zoomed texture, claim graphic, eye/face close-up ad, before/after panel without a dominant product, or a scene where the product becomes incidental.
 - If the target is dominated by a human face, eye, lips, skin, hand, or body part, reject the pair unless the same product/package remains large, clear, and dominant.
+- Keep previous consistency requirements: source and target must be the same product/variant/package, with no brand swap, no product identity drift, no missing full product, no high transformation, and no target where the product is incidental.
 - The main training goal is beautiful product-image editing while preserving the product LOGO, brand marks, package identity, and small text. Prefer pairs that improve layout/aesthetics without changing or corrupting the product identity.
 - Prefer pairs that preserve, move, resize, or add readable small text while keeping the complete product. Do not count bottle shape alone as the goal.
 - Small text means fine product-label text, ingredient/capacity text, warning text, dense package copy, small brand/subtitle text, or small ad callouts. Do not count only large headlines as small text.
+- OCR small text explicitly. Use best-effort transcription only for visible text. If a region is unreadable, write "[unreadable]" and mark low confidence instead of hallucinating.
 - Reject or down-score pairs where the logo, brand name, key package text, or fine label text is missing, heavily distorted, replaced by a different brand, or visually implausible.
 - A good target should be aesthetically useful: cleaner composition, nicer lighting/background, better ad layout, or more polished product presentation.
+- Description fields must be specific and sufficient. Avoid generic one-line descriptions; include product placement, background/layout, logo/brand evidence, small-text regions, aesthetic qualities, and any visible risks.
 - Keep transformations controlled: low or medium transformation is preferred over high.
 - Videos are not provided to you. Ignore video URLs.
 
@@ -74,6 +78,19 @@ angle_to_ad, bad_or_uncertain
     "product_consistency_risk": "low/medium/high",
     "notes": "short reason"
   },
+  "source_selection": {
+    "selected_main_source_image_index": 0,
+    "selected_main_source_image_id": "string",
+    "selected_source_is_amazon_main_variant": true,
+    "selection_confidence": 0.0,
+    "selection_reason": "why this image is the best clean complete source, considering full product visibility, logo/text readability, quality, and identity consistency",
+    "rejected_source_candidates": [
+      {
+        "image_index": 1,
+        "reason": "why this image is not the best source"
+      }
+    ]
+  },
   "images": [
     {
       "image_index": 0,
@@ -83,6 +100,9 @@ angle_to_ad, bad_or_uncertain
       "target_edit_description": "detailed description of what an image-editing model would need to create if this image is used as target, including layout, product position, background, visible text, and small-text requirements",
       "role": "main_product",
       "source_candidate_score": 0.0,
+      "selected_as_main_source": false,
+      "main_source_rank": 1,
+      "main_source_reason": "why this image is or is not suitable as the selected source",
       "target_candidate_score": 0.0,
       "quality_score": 0.0,
       "aesthetic_score": 0.0,
@@ -101,6 +121,16 @@ angle_to_ad, bad_or_uncertain
       "small_text_regions": ["package front", "package side", "bottom label", "ad callout"],
       "small_text_legibility": "none/poor/partial/readable",
       "small_text_transcription": ["best-effort short snippets of readable small text, not full OCR"],
+      "small_text_ocr_text": "best-effort OCR string for visible small text only; use [unreadable] for unreadable regions and do not invent text",
+      "small_text_ocr_spans": [
+        {
+          "region": "package front lower label",
+          "text": "best-effort OCR text or [unreadable]",
+          "legibility": "poor/partial/readable",
+          "confidence": 0.0,
+          "is_exact": false
+        }
+      ],
       "small_text_importance": "none/low/medium/high",
       "small_text_risk": "none/low/medium/high",
       "has_human": false,
@@ -413,12 +443,45 @@ def as_bool(value) -> bool:
     return bool(value)
 
 
+def text_len(value) -> int:
+    if value is None:
+        return 0
+    if isinstance(value, list):
+        value = " ".join(str(item) for item in value)
+    return len(str(value).strip())
+
+
+def small_text_ocr_len(image: dict) -> int:
+    parts = []
+    if image.get("small_text_ocr_text"):
+        parts.append(str(image.get("small_text_ocr_text")))
+    for span in image.get("small_text_ocr_spans") or []:
+        if isinstance(span, dict) and span.get("text"):
+            parts.append(str(span.get("text")))
+    return text_len(" ".join(parts))
+
+
+def selected_main_source_index(annotation: dict):
+    selection = annotation.get("source_selection") or {}
+    selected = selection.get("selected_main_source_image_index")
+    if selected is not None:
+        try:
+            return int(selected)
+        except (TypeError, ValueError):
+            return selected
+    for image in annotation.get("images", []):
+        if isinstance(image, dict) and as_bool(image.get("selected_as_main_source")):
+            return image.get("image_index")
+    return None
+
+
 def postprocess_annotation(annotation: dict, args) -> tuple[dict, list[dict]]:
     images = {
         image.get("image_index"): image
         for image in annotation.get("images", [])
         if isinstance(image, dict)
     }
+    selected_source_index = selected_main_source_index(annotation)
     valid_pairs = []
     processed_pairs = []
     blocked_roles = {
@@ -448,6 +511,8 @@ def postprocess_annotation(annotation: dict, args) -> tuple[dict, list[dict]]:
 
         source_score = as_float(source.get("source_candidate_score"))
         target_score = as_float(target.get("target_candidate_score"))
+        source_quality = as_float(source.get("quality_score"))
+        target_quality = as_float(target.get("quality_score"))
         target_visibility = as_float(target.get("main_product_visibility"))
         target_same = as_float(target.get("same_product_confidence"))
         target_aesthetic = as_float(target.get("aesthetic_score"))
@@ -457,13 +522,31 @@ def postprocess_annotation(annotation: dict, args) -> tuple[dict, list[dict]]:
         target_role = target.get("role")
         pair_type = pair.get("pair_type")
         target_full_product_visible = as_bool(target.get("full_product_visible"))
+        source_description_chars = text_len(source.get("detailed_description"))
+        target_description_chars = text_len(target.get("detailed_description"))
+        source_identity_chars = text_len(source.get("product_identity_description"))
+        target_identity_chars = text_len(target.get("product_identity_description"))
+        detailed_instruction_chars = text_len(pair.get("edit_instruction_detailed"))
+        logo_preservation_chars = text_len(pair.get("logo_preservation"))
+        small_text_preservation_chars = text_len(pair.get("small_text_preservation"))
+        source_small_text_ocr_chars = small_text_ocr_len(source)
+        target_small_text_ocr_chars = small_text_ocr_len(target)
 
         if pair_type not in allowed_pair_types:
             reasons.append(f"unknown_pair_type:{pair_type}")
+        if args.require_selected_main_source:
+            if selected_source_index is None:
+                reasons.append("missing_selected_main_source")
+            elif pair.get("source_image_index") != selected_source_index:
+                reasons.append(f"source_image_index_not_selected_main_source:{selected_source_index}")
         if source_score < args.min_pair_source_score:
             reasons.append(f"source_candidate_score<{args.min_pair_source_score}")
         if target_score < args.min_pair_target_score:
             reasons.append(f"target_candidate_score<{args.min_pair_target_score}")
+        if source_quality < args.min_pair_source_quality_score:
+            reasons.append(f"source_quality_score<{args.min_pair_source_quality_score}")
+        if target_quality < args.min_pair_target_quality_score:
+            reasons.append(f"target_quality_score<{args.min_pair_target_quality_score}")
         if target_visibility < args.min_pair_target_visibility:
             reasons.append(f"target_product_visibility<{args.min_pair_target_visibility}")
         if not target_full_product_visible:
@@ -478,6 +561,24 @@ def postprocess_annotation(annotation: dict, args) -> tuple[dict, list[dict]]:
             reasons.append(f"logo_preservation_score<{args.min_pair_logo_preservation_score}")
         if small_text_score < args.min_pair_small_text_training_score:
             reasons.append(f"small_text_training_value_score<{args.min_pair_small_text_training_score}")
+        if source_description_chars < args.min_image_detailed_description_chars:
+            reasons.append(f"source_detailed_description_chars<{args.min_image_detailed_description_chars}")
+        if target_description_chars < args.min_image_detailed_description_chars:
+            reasons.append(f"target_detailed_description_chars<{args.min_image_detailed_description_chars}")
+        if source_identity_chars < args.min_product_identity_description_chars:
+            reasons.append(f"source_product_identity_description_chars<{args.min_product_identity_description_chars}")
+        if target_identity_chars < args.min_product_identity_description_chars:
+            reasons.append(f"target_product_identity_description_chars<{args.min_product_identity_description_chars}")
+        if detailed_instruction_chars < args.min_pair_detailed_instruction_chars:
+            reasons.append(f"edit_instruction_detailed_chars<{args.min_pair_detailed_instruction_chars}")
+        if logo_preservation_chars < args.min_pair_logo_preservation_chars:
+            reasons.append(f"logo_preservation_chars<{args.min_pair_logo_preservation_chars}")
+        if small_text_preservation_chars < args.min_pair_small_text_preservation_chars:
+            reasons.append(f"small_text_preservation_chars<{args.min_pair_small_text_preservation_chars}")
+        if source_small_text_ocr_chars < args.min_image_small_text_ocr_chars:
+            reasons.append(f"source_small_text_ocr_chars<{args.min_image_small_text_ocr_chars}")
+        if target_small_text_ocr_chars < args.min_image_small_text_ocr_chars:
+            reasons.append(f"target_small_text_ocr_chars<{args.min_image_small_text_ocr_chars}")
         if target_role in blocked_roles:
             reasons.append(f"blocked_target_role:{target_role}")
         if (
@@ -492,12 +593,24 @@ def postprocess_annotation(annotation: dict, args) -> tuple[dict, list[dict]]:
         warnings = []
         high_confidence_override = (
             pair.get("pair_type") in {"main_to_ad", "main_to_angle", "main_to_lifestyle", "angle_to_ad"}
+            and (not args.require_selected_main_source or pair.get("source_image_index") == selected_source_index)
             and identity >= args.high_confidence_override_identity
             and as_float(pair.get("training_value_score")) >= args.high_confidence_override_training_value
             and as_float(pair.get("edit_usefulness_score")) >= args.high_confidence_override_usefulness
+            and source_quality >= args.min_pair_source_quality_score
+            and target_quality >= args.min_pair_target_quality_score
             and target_aesthetic >= args.min_pair_target_aesthetic_score
             and logo_score >= args.min_pair_logo_preservation_score
             and small_text_score >= args.min_pair_small_text_training_score
+            and source_description_chars >= args.min_image_detailed_description_chars
+            and target_description_chars >= args.min_image_detailed_description_chars
+            and source_identity_chars >= args.min_product_identity_description_chars
+            and target_identity_chars >= args.min_product_identity_description_chars
+            and detailed_instruction_chars >= args.min_pair_detailed_instruction_chars
+            and logo_preservation_chars >= args.min_pair_logo_preservation_chars
+            and small_text_preservation_chars >= args.min_pair_small_text_preservation_chars
+            and source_small_text_ocr_chars >= args.min_image_small_text_ocr_chars
+            and target_small_text_ocr_chars >= args.min_image_small_text_ocr_chars
             and target_same >= args.min_pair_target_same_confidence
             and target_role not in blocked_roles
             and not (
@@ -563,12 +676,22 @@ def postprocess_annotation(annotation: dict, args) -> tuple[dict, list[dict]]:
     annotation["postprocess_policy"] = {
         "min_pair_source_score": args.min_pair_source_score,
         "min_pair_target_score": args.min_pair_target_score,
+        "min_pair_source_quality_score": args.min_pair_source_quality_score,
+        "min_pair_target_quality_score": args.min_pair_target_quality_score,
         "min_pair_target_visibility": args.min_pair_target_visibility,
         "min_pair_target_same_confidence": args.min_pair_target_same_confidence,
         "min_pair_identity_confidence": args.min_pair_identity_confidence,
         "min_pair_target_aesthetic_score": args.min_pair_target_aesthetic_score,
         "min_pair_logo_preservation_score": args.min_pair_logo_preservation_score,
         "min_pair_small_text_training_score": args.min_pair_small_text_training_score,
+        "min_image_detailed_description_chars": args.min_image_detailed_description_chars,
+        "min_product_identity_description_chars": args.min_product_identity_description_chars,
+        "min_pair_detailed_instruction_chars": args.min_pair_detailed_instruction_chars,
+        "min_pair_logo_preservation_chars": args.min_pair_logo_preservation_chars,
+        "min_pair_small_text_preservation_chars": args.min_pair_small_text_preservation_chars,
+        "min_image_small_text_ocr_chars": args.min_image_small_text_ocr_chars,
+        "require_selected_main_source": args.require_selected_main_source,
+        "selected_main_source_image_index": selected_source_index,
         "max_valid_pairs_per_product": args.max_valid_pairs_per_product,
     }
     return annotation, final_valid_pairs
@@ -669,6 +792,8 @@ def parse_args():
     parser.add_argument("--max-pending", type=int, default=0, help="0 means workers * 2.")
     parser.add_argument("--min-pair-source-score", type=float, default=0.75)
     parser.add_argument("--min-pair-target-score", type=float, default=0.5)
+    parser.add_argument("--min-pair-source-quality-score", type=float, default=0.0)
+    parser.add_argument("--min-pair-target-quality-score", type=float, default=0.0)
     parser.add_argument("--min-pair-target-visibility", type=float, default=0.25)
     parser.add_argument("--min-pair-human-target-visibility", type=float, default=0.75)
     parser.add_argument("--min-pair-target-same-confidence", type=float, default=0.85)
@@ -676,6 +801,13 @@ def parse_args():
     parser.add_argument("--min-pair-target-aesthetic-score", type=float, default=0.0)
     parser.add_argument("--min-pair-logo-preservation-score", type=float, default=0.0)
     parser.add_argument("--min-pair-small-text-training-score", type=float, default=0.0)
+    parser.add_argument("--min-image-detailed-description-chars", type=int, default=0)
+    parser.add_argument("--min-product-identity-description-chars", type=int, default=0)
+    parser.add_argument("--min-pair-detailed-instruction-chars", type=int, default=0)
+    parser.add_argument("--min-pair-logo-preservation-chars", type=int, default=0)
+    parser.add_argument("--min-pair-small-text-preservation-chars", type=int, default=0)
+    parser.add_argument("--min-image-small-text-ocr-chars", type=int, default=0)
+    parser.add_argument("--require-selected-main-source", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--max-valid-pairs-per-product", type=int, default=0, help="0 means no cap.")
     parser.add_argument("--allow-human-dominant-targets", action="store_true")
     parser.add_argument("--high-confidence-override-identity", type=float, default=0.9)

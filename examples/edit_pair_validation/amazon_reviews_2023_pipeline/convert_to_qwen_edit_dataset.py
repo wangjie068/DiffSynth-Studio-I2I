@@ -51,6 +51,7 @@ def iter_pair_records(path: Path):
                 "pair_id": f"{record.get('product_id')}_{index:03d}",
                 "product_id": record.get("product_id"),
                 "product": product,
+                "source_selection": record.get("annotation", {}).get("source_selection"),
                 "raw_product": record.get("raw_product"),
                 "source_image": source,
                 "target_image": target,
@@ -85,9 +86,30 @@ def as_float(value, default=0.0):
         return default
 
 
+def text_len(value) -> int:
+    if value is None:
+        return 0
+    if isinstance(value, list):
+        value = " ".join(str(item) for item in value)
+    return len(str(value).strip())
+
+
+def small_text_ocr_len(image: dict) -> int:
+    parts = []
+    if image.get("small_text_ocr_text"):
+        parts.append(str(image.get("small_text_ocr_text")))
+    for span in image.get("small_text_ocr_spans") or []:
+        if isinstance(span, dict) and span.get("text"):
+            parts.append(str(span.get("text")))
+    return text_len(" ".join(parts))
+
+
 def keep_pair(record, args):
     product = record.get("product") or {}
     pair = record.get("pair") or {}
+    source_label = record.get("source_image_label") or {}
+    target_label = record.get("target_image_label") or {}
+    prompt = record.get("edit_instruction_detailed") or record.get("edit_instruction")
     if pair.get("reject"):
         return False
     if record.get("post_filter_warnings") and not args.include_warning_pairs:
@@ -116,10 +138,32 @@ def keep_pair(record, args):
         return False
     if as_float(record.get("logo_preservation_score")) < args.min_logo_preservation_score:
         return False
+    if as_float(source_label.get("quality_score")) < args.min_source_quality_score:
+        return False
+    if as_float(target_label.get("quality_score")) < args.min_target_quality_score:
+        return False
+    if text_len(source_label.get("detailed_description")) < args.min_image_detailed_description_chars:
+        return False
+    if text_len(target_label.get("detailed_description")) < args.min_image_detailed_description_chars:
+        return False
+    if text_len(source_label.get("product_identity_description")) < args.min_product_identity_description_chars:
+        return False
+    if text_len(target_label.get("product_identity_description")) < args.min_product_identity_description_chars:
+        return False
+    if text_len(prompt) < args.min_prompt_chars:
+        return False
+    if text_len(record.get("logo_preservation")) < args.min_logo_preservation_chars:
+        return False
+    if text_len(record.get("small_text_preservation")) < args.min_small_text_preservation_chars:
+        return False
+    if small_text_ocr_len(source_label) < args.min_image_small_text_ocr_chars:
+        return False
+    if small_text_ocr_len(target_label) < args.min_image_small_text_ocr_chars:
+        return False
     return bool(
         record.get("source_url")
         and record.get("target_url")
-        and (record.get("edit_instruction_detailed") or record.get("edit_instruction"))
+        and prompt
     )
 
 
@@ -176,6 +220,14 @@ def parse_args():
     parser.add_argument("--min-target-aesthetic-score", type=float, default=0.0)
     parser.add_argument("--min-aesthetic-improvement-score", type=float, default=0.0)
     parser.add_argument("--min-logo-preservation-score", type=float, default=0.0)
+    parser.add_argument("--min-source-quality-score", type=float, default=0.0)
+    parser.add_argument("--min-target-quality-score", type=float, default=0.0)
+    parser.add_argument("--min-image-detailed-description-chars", type=int, default=0)
+    parser.add_argument("--min-product-identity-description-chars", type=int, default=0)
+    parser.add_argument("--min-prompt-chars", type=int, default=0)
+    parser.add_argument("--min-logo-preservation-chars", type=int, default=0)
+    parser.add_argument("--min-small-text-preservation-chars", type=int, default=0)
+    parser.add_argument("--min-image-small-text-ocr-chars", type=int, default=0)
     return parser.parse_args()
 
 
@@ -215,6 +267,7 @@ def main():
             "product_id": record.get("product_id"),
             "pair_id": record.get("pair_id"),
             "pair_type": record.get("pair_type"),
+            "source_selection": record.get("source_selection"),
             "identity_confidence": record.get("identity_confidence"),
             "training_value_score": record.get("training_value_score"),
             "edit_usefulness_score": record.get("edit_usefulness_score"),
