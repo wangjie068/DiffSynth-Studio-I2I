@@ -68,6 +68,7 @@ def iter_pair_records(path: Path):
                 "pair_quality_tier": pair.get("pair_quality_tier"),
                 "pair_quality_judgement": pair.get("pair_quality_judgement"),
                 "pair_failure_modes": pair.get("pair_failure_modes", []),
+                "edit_scope_complexity": pair.get("edit_scope_complexity"),
                 "identity_confidence": pair.get("identity_confidence"),
                 "training_value_score": pair.get("training_value_score"),
                 "edit_usefulness_score": pair.get("edit_usefulness_score"),
@@ -109,6 +110,24 @@ def small_text_ocr_len(image: dict) -> int:
     return text_len(" ".join(parts))
 
 
+def is_complex_target(record: dict) -> bool:
+    target_label = record.get("target_image_label") or {}
+    pair = record.get("pair") or {}
+    if str(record.get("pair_type") or "").lower() == "main_to_infographic":
+        return True
+    if str(target_label.get("layout_type") or "").lower() in {"multi_panel", "collage"}:
+        return True
+    if str(target_label.get("layout_complexity") or "").lower() == "complex":
+        return True
+    if str(record.get("edit_scope_complexity") or pair.get("edit_scope_complexity") or "").lower() == "complex":
+        return True
+    if target_label.get("has_multiple_products") or target_label.get("has_multiple_product_views"):
+        return True
+    if target_label.get("has_color_or_variant_swatches"):
+        return True
+    return False
+
+
 def keep_pair(record, args):
     product = record.get("product") or {}
     pair = record.get("pair") or {}
@@ -128,6 +147,8 @@ def keep_pair(record, args):
     if as_float(record.get("pair_quality_score")) < args.min_pair_quality_score:
         return False
     if args.pair_type_regex and not re.search(args.pair_type_regex, str(record.get("pair_type") or ""), re.I):
+        return False
+    if args.reject_complex_targets and is_complex_target(record):
         return False
     if args.product_domain_regex and not re.search(args.product_domain_regex, str(product.get("domain") or ""), re.I):
         return False
@@ -221,6 +242,7 @@ def parse_args():
     parser.add_argument("--require-model-high-quality-pair", action="store_true")
     parser.add_argument("--min-pair-quality-score", type=float, default=0.0)
     parser.add_argument("--pair-type-regex", default="main_to_ad|main_to_angle|main_to_lifestyle|angle_to_ad")
+    parser.add_argument("--reject-complex-targets", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--product-domain-regex", default="")
     parser.add_argument("--max-transformation", choices=["low", "medium", "high"], default="medium")
     parser.add_argument("--min-identity-confidence", type=float, default=0.85)
