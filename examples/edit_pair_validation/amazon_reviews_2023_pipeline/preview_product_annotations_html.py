@@ -286,8 +286,8 @@ td, th {{ border:1px solid #ddd; padding:4px 7px; }}
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Create a browsable HTML preview for product-level Amazon annotation JSONL.")
-    parser.add_argument("--annotations", type=Path, required=True)
-    parser.add_argument("--out", type=Path, required=True)
+    parser.add_argument("--annotations", "--input", dest="annotations", type=Path, required=True)
+    parser.add_argument("--out", "--output", dest="out", type=Path, required=True)
     parser.add_argument("--max-products", type=int, default=0, help="0 means all products.")
     parser.add_argument("--show-rejected", action="store_true", help="Show all pairs instead of valid pairs only.")
     return parser.parse_args()
