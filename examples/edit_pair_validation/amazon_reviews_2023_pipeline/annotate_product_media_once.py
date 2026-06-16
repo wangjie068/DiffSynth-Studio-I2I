@@ -543,10 +543,6 @@ def target_is_back_view(target: dict, pair: dict) -> bool:
             target.get("detailed_description"),
             target.get("product_identity_description"),
             target.get("target_edit_description"),
-            pair.get("edit_instruction"),
-            pair.get("edit_instruction_detailed"),
-            pair.get("logo_preservation"),
-            pair.get("small_text_preservation"),
         ]
     )
     return bool(re.search(
@@ -556,13 +552,33 @@ def target_is_back_view(target: dict, pair: dict) -> bool:
     ))
 
 
-def target_complexity_reasons(target: dict, pair: dict, args) -> list[str]:
+def source_complexity_reasons(source: dict, args) -> list[str]:
+    reasons = []
+    layout_type = str(source.get("layout_type") or "").lower()
+    layout_complexity = str(source.get("layout_complexity") or "").lower()
+    product_count = as_float(source.get("product_instance_count"), 1.0)
+    if layout_type in {"multi_panel", "collage"}:
+        reasons.append(f"blocked_source_layout:{layout_type}")
+    if layout_complexity == "complex":
+        reasons.append("source_layout_complexity:complex")
+    if as_bool(source.get("has_multiple_product_views")):
+        reasons.append("source_has_multiple_product_views")
+    if as_bool(source.get("has_color_or_variant_swatches")):
+        reasons.append("source_has_color_or_variant_swatches")
+    if product_count > args.max_source_product_instance_count:
+        reasons.append(f"source_product_instance_count>{args.max_source_product_instance_count}")
+    return reasons
+
+
+def target_complexity_reasons(source: dict, target: dict, pair: dict, args) -> list[str]:
     reasons = []
     layout_type = str(target.get("layout_type") or "").lower()
     layout_complexity = str(target.get("layout_complexity") or "").lower()
     edit_scope = str(pair.get("edit_scope_complexity") or "").lower()
     pair_type = str(pair.get("pair_type") or "").lower()
-    product_count = as_float(target.get("product_instance_count"), 1.0)
+    source_count = as_float(source.get("product_instance_count"), 1.0)
+    target_count = as_float(target.get("product_instance_count"), 1.0)
+    allowed_target_count = max(args.max_target_product_instance_count, source_count)
     descriptive_text = " ".join(
         str(value or "")
         for value in [
@@ -582,10 +598,14 @@ def target_complexity_reasons(target: dict, pair: dict, args) -> list[str]:
         reasons.append("target_layout_complexity:complex")
     if edit_scope == "complex":
         reasons.append("edit_scope_complexity:complex")
-    if not args.allow_multi_product_targets and as_bool(target.get("has_multiple_products")):
-        reasons.append("target_has_multiple_products")
-    if not args.allow_multi_product_targets and product_count > args.max_target_product_instance_count:
-        reasons.append(f"target_product_instance_count>{args.max_target_product_instance_count}")
+    if (
+        not args.allow_multi_product_targets
+        and as_bool(target.get("has_multiple_products"))
+        and target_count > allowed_target_count
+    ):
+        reasons.append("target_has_extra_products")
+    if not args.allow_multi_product_targets and target_count > allowed_target_count:
+        reasons.append(f"target_product_instance_count>{allowed_target_count:g}")
     if as_bool(target.get("has_multiple_product_views")):
         reasons.append("target_has_multiple_product_views")
     if as_bool(target.get("has_color_or_variant_swatches")):
@@ -711,9 +731,10 @@ def postprocess_annotation(annotation: dict, args) -> tuple[dict, list[dict]]:
             reasons.append(f"small_text_preservation_chars<{args.min_pair_small_text_preservation_chars}")
         if target_small_text_ocr_chars < args.min_target_small_text_ocr_chars:
             reasons.append(f"target_small_text_ocr_chars<{args.min_target_small_text_ocr_chars}")
+        reasons.extend(source_complexity_reasons(source, args))
         if args.reject_target_back_view and target_is_back_view(target, pair):
             reasons.append("target_back_or_rear_view_not_allowed")
-        reasons.extend(target_complexity_reasons(target, pair, args))
+        reasons.extend(target_complexity_reasons(source, target, pair, args))
         if target_role in blocked_roles:
             reasons.append(f"blocked_target_role:{target_role}")
         if pair.get("transformation_magnitude") == "high":
@@ -743,7 +764,8 @@ def postprocess_annotation(annotation: dict, args) -> tuple[dict, list[dict]]:
             and small_text_preservation_chars >= args.min_pair_small_text_preservation_chars
             and target_small_text_ocr_chars >= args.min_target_small_text_ocr_chars
             and (not args.reject_target_back_view or not target_is_back_view(target, pair))
-            and not target_complexity_reasons(target, pair, args)
+            and not source_complexity_reasons(source, args)
+            and not target_complexity_reasons(source, target, pair, args)
             and target_same >= args.min_pair_target_same_confidence
             and target_role not in blocked_roles
             and pair.get("transformation_magnitude") != "high"
@@ -825,6 +847,7 @@ def postprocess_annotation(annotation: dict, args) -> tuple[dict, list[dict]]:
         "reject_target_back_view": args.reject_target_back_view,
         "allow_infographic_pairs": args.allow_infographic_pairs,
         "allow_multi_product_targets": args.allow_multi_product_targets,
+        "max_source_product_instance_count": args.max_source_product_instance_count,
         "max_target_product_instance_count": args.max_target_product_instance_count,
         "require_selected_main_source": args.require_selected_main_source,
         "selected_main_source_image_index": selected_source_index,
@@ -947,6 +970,7 @@ def parse_args():
     parser.add_argument("--reject-target-back-view", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--allow-infographic-pairs", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--allow-multi-product-targets", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--max-source-product-instance-count", type=float, default=2)
     parser.add_argument("--max-target-product-instance-count", type=float, default=1)
     parser.add_argument("--min-image-detailed-description-chars", type=int, default=0)
     parser.add_argument("--min-product-identity-description-chars", type=int, default=0)

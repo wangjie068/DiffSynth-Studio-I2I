@@ -110,9 +110,24 @@ def small_text_ocr_len(image: dict) -> int:
     return text_len(" ".join(parts))
 
 
-def is_complex_target(record: dict) -> bool:
+def is_complex_source(record: dict, args) -> bool:
+    source_label = record.get("source_image_label") or {}
+    if str(source_label.get("layout_type") or "").lower() in {"multi_panel", "collage"}:
+        return True
+    if str(source_label.get("layout_complexity") or "").lower() == "complex":
+        return True
+    if source_label.get("has_multiple_product_views") or source_label.get("has_color_or_variant_swatches"):
+        return True
+    return as_float(source_label.get("product_instance_count"), 1.0) > args.max_source_product_instance_count
+
+
+def is_complex_target(record: dict, args) -> bool:
+    source_label = record.get("source_image_label") or {}
     target_label = record.get("target_image_label") or {}
     pair = record.get("pair") or {}
+    source_count = as_float(source_label.get("product_instance_count"), 1.0)
+    target_count = as_float(target_label.get("product_instance_count"), 1.0)
+    allowed_target_count = max(args.max_target_product_instance_count, source_count)
     if str(record.get("pair_type") or "").lower() == "main_to_infographic":
         return True
     if str(target_label.get("layout_type") or "").lower() in {"multi_panel", "collage"}:
@@ -121,9 +136,11 @@ def is_complex_target(record: dict) -> bool:
         return True
     if str(record.get("edit_scope_complexity") or pair.get("edit_scope_complexity") or "").lower() == "complex":
         return True
-    if target_label.get("has_multiple_products") or target_label.get("has_multiple_product_views"):
+    if target_label.get("has_multiple_product_views"):
         return True
     if target_label.get("has_color_or_variant_swatches"):
+        return True
+    if target_count > allowed_target_count:
         return True
     return False
 
@@ -148,7 +165,7 @@ def keep_pair(record, args):
         return False
     if args.pair_type_regex and not re.search(args.pair_type_regex, str(record.get("pair_type") or ""), re.I):
         return False
-    if args.reject_complex_targets and is_complex_target(record):
+    if args.reject_complex_targets and (is_complex_source(record, args) or is_complex_target(record, args)):
         return False
     if args.product_domain_regex and not re.search(args.product_domain_regex, str(product.get("domain") or ""), re.I):
         return False
@@ -243,6 +260,8 @@ def parse_args():
     parser.add_argument("--min-pair-quality-score", type=float, default=0.0)
     parser.add_argument("--pair-type-regex", default="main_to_ad|main_to_angle|main_to_lifestyle|angle_to_ad")
     parser.add_argument("--reject-complex-targets", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--max-source-product-instance-count", type=float, default=2)
+    parser.add_argument("--max-target-product-instance-count", type=float, default=1)
     parser.add_argument("--product-domain-regex", default="")
     parser.add_argument("--max-transformation", choices=["low", "medium", "high"], default="medium")
     parser.add_argument("--min-identity-confidence", type=float, default=0.85)

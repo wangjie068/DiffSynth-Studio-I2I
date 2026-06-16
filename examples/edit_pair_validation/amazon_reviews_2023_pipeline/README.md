@@ -147,6 +147,8 @@ python3 examples/edit_pair_validation/amazon_reviews_2023_pipeline/annotate_prod
   --min-pair-logo-preservation-chars 30 \
   --min-pair-small-text-preservation-chars 30 \
   --min-target-small-text-ocr-chars 20 \
+  --max-source-product-instance-count 2 \
+  --max-target-product-instance-count 1 \
   --require-selected-main-source \
   --workers 4 \
   --sleep 0.1
@@ -181,6 +183,7 @@ Notes:
 - `--min-pair-target-aesthetic-score 0.6` keeps targets visually polished enough for product/ad training.
 - Description length gates prevent underspecified image descriptions, identity descriptions, edit instructions, and preservation notes from entering `valid_pairs`.
 - `--min-target-small-text-ocr-chars 20` requires target small-text OCR content to be written out. Source OCR is useful metadata but is not a hard reject reason.
+- `--max-source-product-instance-count 2` rejects complex bundle source images. A target may keep the same product count as the selected source, but should not introduce extra product instances or multi-view/swatch/collage layouts.
 - Existing output is resumable; without `--overwrite`, already annotated ASINs are skipped.
 - For multiple API keys, set `GPT_API_KEYS=key1,key2` in `.env`, or pass `--api-keys 'key1,key2'`.
 - `--workers` controls concurrent product-level model calls. Keep it no larger than your key/rate-limit capacity.
@@ -243,6 +246,9 @@ python3 examples/edit_pair_validation/amazon_reviews_2023_pipeline/convert_to_qw
   --min-logo-preservation-chars 30 \
   --min-small-text-preservation-chars 30 \
   --min-target-small-text-ocr-chars 20 \
+  --max-source-product-instance-count 2 \
+  --max-target-product-instance-count 1 \
+  --reject-complex-targets \
   --max-transformation medium \
   --min-identity-confidence 0.85 \
   --min-training-value-score 0.0 \
