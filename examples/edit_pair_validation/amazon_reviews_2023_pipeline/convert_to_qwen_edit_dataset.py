@@ -355,7 +355,7 @@ def parse_args():
         type=int,
         default=0,
     )
-    parser.add_argument("--require-target-visible-text-in-instruction", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--require-target-visible-text-in-instruction", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--min-target-visible-text-inventory-chars", type=int, default=20)
     parser.add_argument("--min-target-text-instruction-overlap", type=float, default=0.65)
     return parser.parse_args()
