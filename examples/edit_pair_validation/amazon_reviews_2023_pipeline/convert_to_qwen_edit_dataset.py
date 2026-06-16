@@ -49,12 +49,17 @@ def iter_pair_records(path: Path):
                 "target_image": target,
                 "pair": pair,
                 "edit_instruction": pair.get("edit_instruction", ""),
+                "edit_instruction_detailed": pair.get("edit_instruction_detailed", ""),
                 "source_url": source.get("fpath"),
                 "target_url": target.get("fpath"),
                 "pair_type": pair.get("pair_type"),
                 "identity_confidence": pair.get("identity_confidence"),
                 "training_value_score": pair.get("training_value_score"),
                 "edit_usefulness_score": pair.get("edit_usefulness_score"),
+                "small_text_change": pair.get("small_text_change"),
+                "small_text_training_value_score": pair.get("small_text_training_value_score"),
+                "small_text_preservation": pair.get("small_text_preservation"),
+                "small_text_generation": pair.get("small_text_generation"),
                 "transformation_magnitude": pair.get("transformation_magnitude"),
                 "post_filter_warnings": pair.get("post_filter_warnings", []),
             }
@@ -76,6 +81,8 @@ def keep_pair(record, args):
         return False
     if args.bottle_like_only and not product.get("is_bottle_like"):
         return False
+    if args.small_text_only and as_float(record.get("small_text_training_value_score")) < args.min_small_text_training_score:
+        return False
     if args.pair_type_regex and not re.search(args.pair_type_regex, str(record.get("pair_type") or ""), re.I):
         return False
     if args.product_domain_regex and not re.search(args.product_domain_regex, str(product.get("domain") or ""), re.I):
@@ -90,7 +97,11 @@ def keep_pair(record, args):
         return False
     if as_float(record.get("edit_usefulness_score")) < args.min_edit_usefulness_score:
         return False
-    return bool(record.get("source_url") and record.get("target_url") and record.get("edit_instruction"))
+    return bool(
+        record.get("source_url")
+        and record.get("target_url")
+        and (record.get("edit_instruction_detailed") or record.get("edit_instruction"))
+    )
 
 
 def run_curl(url, timeout):
@@ -135,6 +146,8 @@ def parse_args():
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--include-warning-pairs", action="store_true")
     parser.add_argument("--bottle-like-only", action="store_true")
+    parser.add_argument("--small-text-only", action="store_true")
+    parser.add_argument("--min-small-text-training-score", type=float, default=0.5)
     parser.add_argument("--pair-type-regex", default="main_to_ad|main_to_angle|main_to_lifestyle|angle_to_ad")
     parser.add_argument("--product-domain-regex", default="")
     parser.add_argument("--max-transformation", choices=["low", "medium", "high"], default="medium")
@@ -172,16 +185,21 @@ def main():
                 })
                 continue
 
+        prompt = record.get("edit_instruction_detailed") or record.get("edit_instruction")
         metadata.append({
             "image": str(target_path.relative_to(args.output_dir)),
             "edit_image": str(source_path.relative_to(args.output_dir)),
-            "prompt": record.get("edit_instruction"),
+            "prompt": prompt,
             "product_id": record.get("product_id"),
             "pair_id": record.get("pair_id"),
             "pair_type": record.get("pair_type"),
             "identity_confidence": record.get("identity_confidence"),
             "training_value_score": record.get("training_value_score"),
             "edit_usefulness_score": record.get("edit_usefulness_score"),
+            "small_text_change": record.get("small_text_change"),
+            "small_text_training_value_score": record.get("small_text_training_value_score"),
+            "small_text_preservation": record.get("small_text_preservation"),
+            "small_text_generation": record.get("small_text_generation"),
             "transformation_magnitude": record.get("transformation_magnitude"),
             "source_url": record.get("source_url"),
             "target_url": record.get("target_url"),

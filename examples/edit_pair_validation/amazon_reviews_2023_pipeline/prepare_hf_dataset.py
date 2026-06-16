@@ -42,12 +42,17 @@ def pair_record(product_record: dict, pair: dict, pair_index: int):
         "target_image": target,
         "pair": pair,
         "edit_instruction": pair.get("edit_instruction", ""),
+        "edit_instruction_detailed": pair.get("edit_instruction_detailed", ""),
         "source_url": source.get("fpath"),
         "target_url": target.get("fpath"),
         "pair_type": pair.get("pair_type"),
         "identity_confidence": pair.get("identity_confidence"),
         "training_value_score": pair.get("training_value_score"),
         "edit_usefulness_score": pair.get("edit_usefulness_score"),
+        "small_text_change": pair.get("small_text_change"),
+        "small_text_training_value_score": pair.get("small_text_training_value_score"),
+        "small_text_preservation": pair.get("small_text_preservation"),
+        "small_text_generation": pair.get("small_text_generation"),
         "transformation_magnitude": pair.get("transformation_magnitude"),
         "post_filter_warnings": pair.get("post_filter_warnings", []),
     }
@@ -116,7 +121,7 @@ configs:
 This dataset contains product-level multimodal annotations derived from
 `McAuley-Lab/Amazon-Reviews-2023` raw metadata. Each product annotation keeps
 the original product metadata, source image URL records, model-produced image
-labels, and post-processed candidate edit pairs.
+labels, small-text annotations, and post-processed candidate edit pairs.
 
 ## Files
 
@@ -130,7 +135,8 @@ labels, and post-processed candidate edit pairs.
 - Pair records: {pair_count}
 
 Each product record keeps original product metadata, original image URL records,
-model annotation, post-processed valid pairs, and any warnings/reject reasons.
+model annotation, small-text labels, post-processed valid pairs, and any
+warnings/reject reasons.
 Images are referenced by URL and are not redistributed in this annotation dataset.
 Use the conversion script in the source repository to download only selected
 training pairs.

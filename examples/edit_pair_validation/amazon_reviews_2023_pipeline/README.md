@@ -8,7 +8,7 @@ The design goal is to avoid wasting data or model calls:
 - Keep original product metadata.
 - Keep all image/video URL metadata.
 - Call the multimodal model once per product/ASIN.
-- Label product, image roles, and candidate pairs in one response.
+- Label product, image roles, small-text properties, and candidate pairs in one response.
 - Do not delete uncertain data; keep labels, scores, reject reasons, and warnings.
 - Download images only after pair selection.
 
@@ -54,6 +54,12 @@ Each annotation line keeps:
 - `raw_annotation`: model response before post-processing.
 - `annotation`: post-processed annotation with `pairs` and `valid_pairs`.
 - `valid_pairs`: pair candidates accepted by rule post-processing.
+
+Small-text annotations are first-class labels. Product records include
+`has_small_text` and `small_text_training_potential`; image records include
+small-text density, regions, legibility, transcription snippets, and risk; pair
+records include small-text change type, preservation/generation notes, detailed
+edit instructions, and `small_text_training_value_score`.
 
 ## 1. Local Smoke Test
 
@@ -107,7 +113,7 @@ python3 examples/edit_pair_validation/amazon_reviews_2023_pipeline/export_hf_ama
 
 ## 3. Server Product-Level Annotation
 
-Beauty bottles/skincare first:
+Beauty/package small-text products first:
 
 ```bash
 python3 examples/edit_pair_validation/amazon_reviews_2023_pipeline/annotate_product_media_once.py \
@@ -119,6 +125,7 @@ python3 examples/edit_pair_validation/amazon_reviews_2023_pipeline/annotate_prod
   --max-products 100000000 \
   --max-images-per-product 10 \
   --min-images 4 \
+  --min-pair-small-text-training-score 0.5 \
   --workers 4 \
   --sleep 0.1
 ```
@@ -144,6 +151,7 @@ Notes:
 - `--max-valid-pairs-per-product 0` is the default and means no cap.
 - The model is still instructed to select useful pairs only, not all combinations.
 - A valid pair requires the target image to contain the complete same product/package as the source image. Partial eye/skin/detail/claim graphics are retained with reject reasons, not used as valid pairs.
+- `--min-pair-small-text-training-score 0.5` makes `valid_pairs` focus on useful small-text supervision. Leave it at `0.0` if you want to keep non-small-text valid pairs and filter later.
 - Existing output is resumable; without `--overwrite`, already annotated ASINs are skipped.
 - For multiple API keys, set `GPT_API_KEYS=key1,key2` in `.env`, or pass `--api-keys 'key1,key2'`.
 - `--workers` controls concurrent product-level model calls. Keep it no larger than your key/rate-limit capacity.
@@ -191,7 +199,8 @@ Download only selected pair images and create Qwen-Image-Edit style metadata:
 python3 examples/edit_pair_validation/amazon_reviews_2023_pipeline/convert_to_qwen_edit_dataset.py \
   --annotations data/amazon_reviews_2023/hf_product_edit_annotations/product_annotations/train-00000-of-00001.jsonl \
   --output-dir data/amazon_reviews_2023/qwen_image_edit_train \
-  --bottle-like-only \
+  --small-text-only \
+  --min-small-text-training-score 0.5 \
   --max-transformation medium \
   --min-identity-confidence 0.85 \
   --min-training-value-score 0.0 \
@@ -215,7 +224,7 @@ data/amazon_reviews_2023/qwen_image_edit_train/
 
 - `edit_image`: source image path.
 - `image`: target image path.
-- `prompt`: edit instruction.
+- `prompt`: detailed edit instruction when available, otherwise the concise edit instruction.
 
 ## Recommended Selection Policy
 
@@ -225,6 +234,8 @@ For high precision training data:
 - `pair_type in main_to_ad, main_to_angle, main_to_lifestyle, angle_to_ad`
 - `transformation_magnitude in low, medium`
 - `identity_confidence >= 0.85`
-- `product.is_bottle_like == true` for bottle/jar/tube focused training.
+- `small_text_training_value_score >= 0.5`
+- `target.full_product_visible == true`
+- `annotation.images[*].small_text_legibility in partial/readable` for manual inspection subsets.
 
 Pairs with `post_filter_warnings` are retained in the annotation dataset. Exclude them by default for training, or include them with `--include-warning-pairs` after review.
