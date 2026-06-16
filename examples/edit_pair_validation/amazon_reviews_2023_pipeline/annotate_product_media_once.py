@@ -46,14 +46,28 @@ Do all annotation in ONE pass:
 - Prefer pairs that preserve, move, resize, or add readable small text while keeping the complete product. Do not count bottle shape alone as the goal.
 - Small text means fine product-label text, ingredient/capacity text, warning text, dense package copy, small brand/subtitle text, or small ad callouts. Do not count only large headlines as small text.
 - OCR small text explicitly. Use best-effort transcription only for visible text. If a region is unreadable, write "[unreadable]" and mark low confidence instead of hallucinating.
+- For every image with visible text, transcribe the text inventory explicitly. Separate product/package text from ad headline, body copy, benefit list, icon labels, badges, callouts, and disclaimer text.
+- Description and instruction fields must name the important visible words, not only say "headline", "benefit icons", "small text", or "branding". For example, write the headline text and icon labels such as "For Longer, Stronger Hair", "Natural", "Vegan", "Cruelty Free", "Gluten Free", "Non-Toxic", and "Palm Free" when visible.
+- edit_instruction_detailed must be long-form and directly usable as a training prompt. It should include: exact product identity to preserve, exact source package/logo/small text to preserve when readable, target composition, target visible marketing text to generate, target icon/benefit/callout labels, typography/color/style, lighting/background, and explicit forbidden changes.
 - Exclude products that are themselves flat decorative sheets, nail-art sticker/decal sheets, temporary tattoo sheets, pattern sheets, or swatch-like design collections. These do not provide stable product LOGO/package text preservation training.
 - Reject or down-score pairs where the logo, brand name, key package text, or fine label text is missing, heavily distorted, replaced by a different brand, or visually implausible.
 - A good target should be aesthetically useful: cleaner composition, nicer lighting/background, better ad layout, or more polished product presentation.
-- Description fields must be specific and sufficient. Avoid generic one-line descriptions; include product placement, background/layout, logo/brand evidence, small-text regions, aesthetic qualities, and any visible risks.
+- Description fields must be specific and sufficient. Avoid generic one-line descriptions; include exact product identity, object count, product placement, camera/view, background/layout, props, material/texture/finish, lighting/shadow, text/graphics, logo/brand evidence, small-text regions, aesthetic qualities, and any visible risks.
+- detailed_description should let a human imagine the image without seeing it. Do not write only "polished ad-style image"; describe what is in the image, where it is, what text is present, what props/effects appear, and how the product looks.
 - Be strict when judging high-quality pairs. A high-quality pair must have a good source, a visually polished target, complete same product, no front-to-back view change, preserved logo/brand identity, useful small-text supervision, and a detailed actionable instruction. If any of these are weak, set is_high_quality_pair=false and explain why.
 - Do not select complex reconstruction targets: no multi-panel collage, no multi-view product grid, no color/variant comparison chart, no swatch board, and no target containing many duplicated product instances. The target should be one coherent polished product image/ad scene, not a product-detail infographic page.
 - Keep transformations controlled: low or medium transformation is preferred over high.
 - Videos are not provided to you. Ignore video URLs.
+
+# Detailed Instruction Requirements
+For each valid pair, write edit_instruction_detailed in the style of a complete training prompt, not a short caption.
+It must cover:
+- Source identity reference: exact product type, color, material/finish, package shape, cap/pump/nozzle, label design, brand/logo words, key package text, and product proportions to preserve.
+- Target composition: square/portrait/landscape if apparent, product position, scale, orientation, crop, negative space, background, props, graphics, icons, ingredient elements, human/body parts if any, and whether shadows/reflections are needed.
+- Target text design: exact visible headline/body/list/icon/badge text, typography style, color, hierarchy, and placement.
+- Aesthetic direction: commercial style, lighting, color palette, realism level, premium/clean/lifestyle/editorial feeling, and Amazon listing suitability.
+- Forbidden changes: no product identity drift, no back/rear view switch, no missing product, no logo/text corruption, no extra unrelated product, no unreadable key text.
+If the target contains little or no ad text, still describe the full visual transformation in detail: camera, pose, lighting, background, props, texture, product surface, and exact preservation requirements.
 
 # Image Roles
 Use one of:
@@ -109,6 +123,15 @@ angle_to_ad, bad_or_uncertain
       "detailed_description": "2-4 sentences describing the full visible content, product placement, background, text/graphics, props, and any visible issues",
       "product_identity_description": "detailed description of the visible product/package/model/color/shape/logo evidence",
       "target_edit_description": "detailed description of what an image-editing model would need to create if this image is used as target, including layout, product position, background, visible text, and small-text requirements",
+      "visual_inventory": {
+        "product_objects": ["what product objects are visible and how many"],
+        "product_pose_and_camera": "front/angled/side view, orientation, crop, scale, camera distance",
+        "composition": "where the product, props, graphics, and text sit in the frame",
+        "background_and_surface": "background color/type, tabletop/floor/reflection/shadow if visible",
+        "props_and_effects": ["mint leaves, flowers, ingredient cutouts, liquid splash, glow, icons, human/hand/face, etc."],
+        "materials_and_textures": ["plastic, glass, metallic cap, glossy serum, matte label, transparent liquid, etc."],
+        "lighting_and_style": "studio/lifestyle/editorial/ad style, softness, shadows, color palette"
+      },
       "role": "main_product",
       "source_candidate_score": 0.0,
       "selected_as_main_source": false,
@@ -146,6 +169,15 @@ angle_to_ad, bad_or_uncertain
           "is_exact": false
         }
       ],
+      "visible_text_inventory": {
+        "product_package_text": ["exact readable product/package words, brand, subtitle, size, claims"],
+        "ad_headlines": ["exact headline text visible in the image"],
+        "ad_body_copy": ["exact body or paragraph copy visible in the image"],
+        "benefit_list_items": ["exact benefit list items visible in the image"],
+        "icon_labels": ["exact icon labels visible in the image"],
+        "badges_or_callouts": ["exact badge, seal, sticker, or small callout text"],
+        "disclaimers_or_other_text": ["exact other visible text, or [unreadable] when present but illegible"]
+      },
       "small_text_importance": "none/low/medium/high",
       "small_text_risk": "none/low/medium/high",
       "has_human": false,
@@ -191,10 +223,13 @@ angle_to_ad, bad_or_uncertain
       "logo_preservation": "what logo, brand wordmark, icon, or package mark should be preserved from source to target",
       "small_text_preservation": "what exact small text, label zones, or typography should be preserved from source to target",
       "small_text_generation": "what new small text or tiny callouts should be generated in the target, if any",
+      "source_visible_text_to_preserve": ["exact visible source words that should be preserved, including brand/logo/package text"],
+      "target_visible_text_to_generate": ["exact visible target words that should be generated, including headline/body/icon/benefit labels"],
+      "text_rendering_requirements": "specific typography, placement, size, color, legibility, and no-hallucination requirements for all visible target text",
       "reject": false,
       "reject_reasons": [],
       "edit_instruction": "concise image editing instruction from source to target",
-      "edit_instruction_detailed": "detailed instruction describing product preservation, target layout, camera/background changes, aesthetic goal, logo/brand preservation, visible text, small-text preservation/generation, and what must not change",
+      "edit_instruction_detailed": "complete detailed training prompt: preserve exact source product identity; describe target composition, object placement, camera/view, product scale/orientation, props/effects, background/surface, lighting/shadows/reflections, exact visible text and typography, aesthetic style, and forbidden changes",
       "preservation_requirements": ["product identity", "logo/brand", "small label text", "package geometry"]
     }
   ],
@@ -485,6 +520,65 @@ def small_text_ocr_len(image: dict) -> int:
     return text_len(" ".join(parts))
 
 
+def flatten_text_values(value) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, dict):
+        parts = []
+        for child in value.values():
+            parts.extend(flatten_text_values(child))
+        return parts
+    if isinstance(value, list):
+        parts = []
+        for child in value:
+            parts.extend(flatten_text_values(child))
+        return parts
+    return [str(value)]
+
+
+def image_visible_text_inventory(image: dict) -> str:
+    parts = []
+    for key in [
+        "visible_text",
+        "visible_text_inventory",
+        "logo_or_brand_transcription",
+        "small_text_transcription",
+        "small_text_ocr_text",
+    ]:
+        parts.extend(flatten_text_values(image.get(key)))
+    for span in image.get("small_text_ocr_spans") or []:
+        if isinstance(span, dict):
+            parts.extend(flatten_text_values(span.get("text")))
+    return " ".join(part for part in parts if part and part != "[unreadable]")
+
+
+def text_tokens(value: str) -> set[str]:
+    stopwords = {
+        "and", "the", "with", "for", "from", "into", "same", "keep", "text",
+        "product", "bottle", "image", "target", "source", "visible", "label",
+    }
+    tokens = set()
+    for token in re.findall(r"[a-z0-9][a-z0-9'-]{2,}", str(value).lower()):
+        token = token.strip("'-")
+        if token and token not in stopwords:
+            tokens.add(token)
+    return tokens
+
+
+def text_inventory_overlap(inventory: str, instruction: str) -> float:
+    inventory_tokens = text_tokens(inventory)
+    if not inventory_tokens:
+        return 1.0
+    instruction_tokens = text_tokens(instruction)
+    if not instruction_tokens:
+        return 0.0
+    required = min(len(inventory_tokens), 16)
+    matched = len(inventory_tokens & instruction_tokens)
+    return min(matched, required) / required
+
+
 def selected_main_source_index(annotation: dict):
     selection = annotation.get("source_selection") or {}
     selected = selection.get("selected_main_source_image_index")
@@ -680,6 +774,10 @@ def postprocess_annotation(annotation: dict, args) -> tuple[dict, list[dict]]:
         small_text_preservation_chars = text_len(pair.get("small_text_preservation"))
         source_small_text_ocr_chars = small_text_ocr_len(source)
         target_small_text_ocr_chars = small_text_ocr_len(target)
+        target_text_inventory = image_visible_text_inventory(target)
+        target_text_inventory_chars = text_len(target_text_inventory)
+        instruction_text = " ".join(flatten_text_values(pair.get("edit_instruction_detailed")))
+        target_text_instruction_overlap = text_inventory_overlap(target_text_inventory, instruction_text)
 
         if pair_type not in allowed_pair_types:
             reasons.append(f"unknown_pair_type:{pair_type}")
@@ -731,6 +829,13 @@ def postprocess_annotation(annotation: dict, args) -> tuple[dict, list[dict]]:
             reasons.append(f"small_text_preservation_chars<{args.min_pair_small_text_preservation_chars}")
         if target_small_text_ocr_chars < args.min_target_small_text_ocr_chars:
             reasons.append(f"target_small_text_ocr_chars<{args.min_target_small_text_ocr_chars}")
+        if (
+            args.require_target_visible_text_in_instruction
+            and as_bool(target.get("has_marketing_text"))
+            and target_text_inventory_chars >= args.min_target_visible_text_inventory_chars
+            and target_text_instruction_overlap < args.min_target_text_instruction_overlap
+        ):
+            reasons.append(f"target_visible_text_instruction_overlap<{args.min_target_text_instruction_overlap}")
         reasons.extend(source_complexity_reasons(source, args))
         if args.reject_target_back_view and target_is_back_view(target, pair):
             reasons.append("target_back_or_rear_view_not_allowed")
@@ -763,6 +868,12 @@ def postprocess_annotation(annotation: dict, args) -> tuple[dict, list[dict]]:
             and logo_preservation_chars >= args.min_pair_logo_preservation_chars
             and small_text_preservation_chars >= args.min_pair_small_text_preservation_chars
             and target_small_text_ocr_chars >= args.min_target_small_text_ocr_chars
+            and (
+                not args.require_target_visible_text_in_instruction
+                or not as_bool(target.get("has_marketing_text"))
+                or target_text_inventory_chars < args.min_target_visible_text_inventory_chars
+                or target_text_instruction_overlap >= args.min_target_text_instruction_overlap
+            )
             and (not args.reject_target_back_view or not target_is_back_view(target, pair))
             and not source_complexity_reasons(source, args)
             and not target_complexity_reasons(source, target, pair, args)
@@ -842,6 +953,9 @@ def postprocess_annotation(annotation: dict, args) -> tuple[dict, list[dict]]:
         "min_pair_logo_preservation_chars": args.min_pair_logo_preservation_chars,
         "min_pair_small_text_preservation_chars": args.min_pair_small_text_preservation_chars,
         "min_target_small_text_ocr_chars": args.min_target_small_text_ocr_chars,
+        "require_target_visible_text_in_instruction": args.require_target_visible_text_in_instruction,
+        "min_target_visible_text_inventory_chars": args.min_target_visible_text_inventory_chars,
+        "min_target_text_instruction_overlap": args.min_target_text_instruction_overlap,
         "min_product_logo_text_suitability_score": args.min_product_logo_text_suitability_score,
         "blocked_product_regex": args.blocked_product_regex,
         "reject_target_back_view": args.reject_target_back_view,
@@ -977,6 +1091,9 @@ def parse_args():
     parser.add_argument("--min-pair-detailed-instruction-chars", type=int, default=0)
     parser.add_argument("--min-pair-logo-preservation-chars", type=int, default=0)
     parser.add_argument("--min-pair-small-text-preservation-chars", type=int, default=0)
+    parser.add_argument("--require-target-visible-text-in-instruction", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--min-target-visible-text-inventory-chars", type=int, default=20)
+    parser.add_argument("--min-target-text-instruction-overlap", type=float, default=0.65)
     parser.add_argument(
         "--min-target-small-text-ocr-chars",
         "--min-image-small-text-ocr-chars",

@@ -87,6 +87,8 @@ def image_card(source_item: dict, label: dict, selected_index):
       </div>
       <p><b>description</b><br>{esc(label.get("detailed_description"))}</p>
       <p><b>identity</b><br>{esc(label.get("product_identity_description"))}</p>
+      <p><b>visual inventory</b><br>{esc(label.get("visual_inventory"))}</p>
+      <p><b>visible text inventory</b><br>{esc(label.get("visible_text_inventory"))}</p>
       <p><b>logo</b><br>{span_list(label.get("logo_or_brand_transcription"))}</p>
       <p><b>small text OCR</b><br>{esc(label.get("small_text_ocr_text"))}</p>
       <div class="chips">{span_list(label.get("small_text_ocr_spans"))}</div>
@@ -133,6 +135,9 @@ def pair_card(pair: dict, source_item: dict, target_item: dict, source_label: di
       <p><b>failure modes</b><br>{esc(pair.get("pair_failure_modes"))}</p>
       <p><b>instruction</b><br>{esc(pair.get("edit_instruction"))}</p>
       <p><b>detailed instruction</b><br>{esc(pair.get("edit_instruction_detailed"))}</p>
+      <p><b>source text to preserve</b><br>{esc(pair.get("source_visible_text_to_preserve"))}</p>
+      <p><b>target text to generate</b><br>{esc(pair.get("target_visible_text_to_generate"))}</p>
+      <p><b>text rendering requirements</b><br>{esc(pair.get("text_rendering_requirements"))}</p>
       <p><b>logo preservation</b><br>{esc(pair.get("logo_preservation"))}</p>
       <p><b>small text preservation</b><br>{esc(pair.get("small_text_preservation"))}</p>
       <p><b>small text generation</b><br>{esc(pair.get("small_text_generation"))}</p>

@@ -141,12 +141,15 @@ python3 examples/edit_pair_validation/amazon_reviews_2023_pipeline/annotate_prod
   --min-pair-logo-preservation-score 0.7 \
   --min-pair-small-text-training-score 0.5 \
   --min-pair-target-aesthetic-score 0.6 \
-  --min-image-detailed-description-chars 120 \
-  --min-product-identity-description-chars 60 \
-  --min-pair-detailed-instruction-chars 180 \
+  --min-image-detailed-description-chars 180 \
+  --min-product-identity-description-chars 120 \
+  --min-pair-detailed-instruction-chars 320 \
   --min-pair-logo-preservation-chars 30 \
   --min-pair-small-text-preservation-chars 30 \
   --min-target-small-text-ocr-chars 20 \
+  --require-target-visible-text-in-instruction \
+  --min-target-visible-text-inventory-chars 20 \
+  --min-target-text-instruction-overlap 0.65 \
   --max-source-product-instance-count 2 \
   --max-target-product-instance-count 1 \
   --require-selected-main-source \
@@ -182,6 +185,7 @@ Notes:
 - `--min-pair-small-text-training-score 0.5` makes `valid_pairs` focus on useful small-text supervision. Leave it at `0.0` if you want to keep non-small-text valid pairs and filter later.
 - `--min-pair-target-aesthetic-score 0.6` keeps targets visually polished enough for product/ad training.
 - Description length gates prevent underspecified image descriptions, identity descriptions, edit instructions, and preservation notes from entering `valid_pairs`.
+- `--require-target-visible-text-in-instruction` requires target ad/headline/body/icon/benefit text from the image text inventory to be represented in the detailed instruction instead of only saying "add benefit icons" or "add text".
 - `--min-target-small-text-ocr-chars 20` requires target small-text OCR content to be written out. Source OCR is useful metadata but is not a hard reject reason.
 - `--max-source-product-instance-count 2` rejects complex bundle source images. A target may keep the same product count as the selected source, but should not introduce extra product instances or multi-view/swatch/collage layouts.
 - Existing output is resumable; without `--overwrite`, already annotated ASINs are skipped.
@@ -240,12 +244,15 @@ python3 examples/edit_pair_validation/amazon_reviews_2023_pipeline/convert_to_qw
   --min-aesthetic-improvement-score 0.4 \
   --min-source-quality-score 0.65 \
   --min-target-quality-score 0.65 \
-  --min-image-detailed-description-chars 120 \
-  --min-product-identity-description-chars 60 \
-  --min-prompt-chars 180 \
+  --min-image-detailed-description-chars 180 \
+  --min-product-identity-description-chars 120 \
+  --min-prompt-chars 320 \
   --min-logo-preservation-chars 30 \
   --min-small-text-preservation-chars 30 \
   --min-target-small-text-ocr-chars 20 \
+  --require-target-visible-text-in-instruction \
+  --min-target-visible-text-inventory-chars 20 \
+  --min-target-text-instruction-overlap 0.65 \
   --max-source-product-instance-count 2 \
   --max-target-product-instance-count 1 \
   --reject-complex-targets \

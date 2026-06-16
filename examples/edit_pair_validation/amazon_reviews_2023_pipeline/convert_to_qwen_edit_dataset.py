@@ -80,6 +80,9 @@ def iter_pair_records(path: Path):
                 "small_text_training_value_score": pair.get("small_text_training_value_score"),
                 "small_text_preservation": pair.get("small_text_preservation"),
                 "small_text_generation": pair.get("small_text_generation"),
+                "source_visible_text_to_preserve": pair.get("source_visible_text_to_preserve"),
+                "target_visible_text_to_generate": pair.get("target_visible_text_to_generate"),
+                "text_rendering_requirements": pair.get("text_rendering_requirements"),
                 "transformation_magnitude": pair.get("transformation_magnitude"),
                 "post_filter_warnings": pair.get("post_filter_warnings", []),
             }
@@ -108,6 +111,65 @@ def small_text_ocr_len(image: dict) -> int:
         if isinstance(span, dict) and span.get("text"):
             parts.append(str(span.get("text")))
     return text_len(" ".join(parts))
+
+
+def flatten_text_values(value) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, dict):
+        parts = []
+        for child in value.values():
+            parts.extend(flatten_text_values(child))
+        return parts
+    if isinstance(value, list):
+        parts = []
+        for child in value:
+            parts.extend(flatten_text_values(child))
+        return parts
+    return [str(value)]
+
+
+def image_visible_text_inventory(image: dict) -> str:
+    parts = []
+    for key in [
+        "visible_text",
+        "visible_text_inventory",
+        "logo_or_brand_transcription",
+        "small_text_transcription",
+        "small_text_ocr_text",
+    ]:
+        parts.extend(flatten_text_values(image.get(key)))
+    for span in image.get("small_text_ocr_spans") or []:
+        if isinstance(span, dict):
+            parts.extend(flatten_text_values(span.get("text")))
+    return " ".join(part for part in parts if part and part != "[unreadable]")
+
+
+def text_tokens(value: str) -> set[str]:
+    stopwords = {
+        "and", "the", "with", "for", "from", "into", "same", "keep", "text",
+        "product", "bottle", "image", "target", "source", "visible", "label",
+    }
+    tokens = set()
+    for token in re.findall(r"[a-z0-9][a-z0-9'-]{2,}", str(value).lower()):
+        token = token.strip("'-")
+        if token and token not in stopwords:
+            tokens.add(token)
+    return tokens
+
+
+def text_inventory_overlap(inventory: str, instruction: str) -> float:
+    inventory_tokens = text_tokens(inventory)
+    if not inventory_tokens:
+        return 1.0
+    instruction_tokens = text_tokens(instruction)
+    if not instruction_tokens:
+        return 0.0
+    required = min(len(inventory_tokens), 16)
+    matched = len(inventory_tokens & instruction_tokens)
+    return min(matched, required) / required
 
 
 def is_complex_source(record: dict, args) -> bool:
@@ -151,6 +213,8 @@ def keep_pair(record, args):
     source_label = record.get("source_image_label") or {}
     target_label = record.get("target_image_label") or {}
     prompt = record.get("edit_instruction_detailed") or record.get("edit_instruction")
+    target_text_inventory = image_visible_text_inventory(target_label)
+    instruction_text = " ".join(flatten_text_values(record.get("edit_instruction_detailed") or pair.get("edit_instruction_detailed")))
     if pair.get("reject"):
         return False
     if record.get("post_filter_warnings") and not args.include_warning_pairs:
@@ -204,6 +268,13 @@ def keep_pair(record, args):
     if text_len(record.get("small_text_preservation")) < args.min_small_text_preservation_chars:
         return False
     if small_text_ocr_len(target_label) < args.min_target_small_text_ocr_chars:
+        return False
+    if (
+        args.require_target_visible_text_in_instruction
+        and target_label.get("has_marketing_text")
+        and text_len(target_text_inventory) >= args.min_target_visible_text_inventory_chars
+        and text_inventory_overlap(target_text_inventory, instruction_text) < args.min_target_text_instruction_overlap
+    ):
         return False
     return bool(
         record.get("source_url")
@@ -284,6 +355,9 @@ def parse_args():
         type=int,
         default=0,
     )
+    parser.add_argument("--require-target-visible-text-in-instruction", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--min-target-visible-text-inventory-chars", type=int, default=20)
+    parser.add_argument("--min-target-text-instruction-overlap", type=float, default=0.65)
     return parser.parse_args()
 
 
@@ -340,6 +414,9 @@ def main():
             "small_text_training_value_score": record.get("small_text_training_value_score"),
             "small_text_preservation": record.get("small_text_preservation"),
             "small_text_generation": record.get("small_text_generation"),
+            "source_visible_text_to_preserve": record.get("source_visible_text_to_preserve"),
+            "target_visible_text_to_generate": record.get("target_visible_text_to_generate"),
+            "text_rendering_requirements": record.get("text_rendering_requirements"),
             "transformation_magnitude": record.get("transformation_magnitude"),
             "source_url": record.get("source_url"),
             "target_url": record.get("target_url"),
