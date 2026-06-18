@@ -150,7 +150,7 @@ def pair_card(pair: dict, source_item: dict, target_item: dict, source_label: di
     """
 
 
-def product_section(record: dict, show_rejected: bool):
+def product_section(record: dict, show_all_pairs: bool):
     product_id = record.get("product_id")
     ann = record.get("annotation") or {}
     product = ann.get("product") or {}
@@ -166,7 +166,7 @@ def product_section(record: dict, show_rejected: bool):
     }
     pairs = ann.get("pairs") or []
     valid_pairs = record.get("valid_pairs") or ann.get("valid_pairs") or []
-    visible_pairs = pairs if show_rejected else valid_pairs
+    visible_pairs = pairs if show_all_pairs else valid_pairs
     product_url = metadata.get("product_page_url") or raw.get("product_page_url") or ""
     title = metadata.get("title") or raw.get("title") or ""
     images_html = "\n".join(
@@ -212,14 +212,15 @@ def product_section(record: dict, show_rejected: bool):
       </details>
       <h3>Images</h3>
       <div class="image-grid">{images_html}</div>
-      <h3>Pairs {'(all)' if show_rejected else '(valid only)'}</h3>
+      <h3>Pairs {'(all)' if show_all_pairs else '(selected only)'}</h3>
       <div class="pair-grid">{pair_html or '<p class="muted">No pairs to show.</p>'}</div>
     </section>
     """
 
 
 def build_html(records: list[dict], args, stats: dict, rejects: collections.Counter):
-    sections = "\n".join(product_section(record, args.show_rejected) for record in records)
+    show_all_pairs = not args.selected_only
+    sections = "\n".join(product_section(record, show_all_pairs) for record in records)
     reject_rows = "\n".join(
         f"<tr><td>{esc(reason)}</td><td>{count}</td></tr>"
         for reason, count in rejects.most_common(30)
@@ -278,7 +279,7 @@ td, th {{ border:1px solid #ddd; padding:4px 7px; }}
     {metric("images", stats["images"])}
     {metric("pairs", stats["pairs"])}
     {metric("valid pairs", stats["valid_pairs"], "good")}
-    {metric("show", "all pairs" if args.show_rejected else "valid only")}
+    {metric("show", "all pairs" if show_all_pairs else "selected only")}
   </div>
   <details>
     <summary>Top reject reasons</summary>
@@ -296,7 +297,8 @@ def parse_args():
     parser.add_argument("--annotations", "--input", dest="annotations", type=Path, required=True)
     parser.add_argument("--out", "--output", dest="out", type=Path, required=True)
     parser.add_argument("--max-products", type=int, default=0, help="0 means all products.")
-    parser.add_argument("--show-rejected", action="store_true", help="Show all pairs instead of valid pairs only.")
+    parser.add_argument("--selected-only", action="store_true", help="Only show final_status=selected pairs.")
+    parser.add_argument("--show-rejected", action="store_true", help=argparse.SUPPRESS)
     return parser.parse_args()
 
 
