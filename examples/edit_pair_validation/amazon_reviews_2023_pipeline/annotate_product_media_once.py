@@ -23,6 +23,7 @@ ANNOTATION_PROMPT = """You are an e-commerce visual annotator for image-to-image
 Return STRICT JSON only. Annotate one Amazon product/ASIN in one pass.
 
 Core policy:
+- You are given N numbered images. The returned "images" array MUST contain exactly one annotation object for every input image_index. Do not omit images. If an image is bad or not useful, still return it with role="bad_or_unclear", recommended_use="exclude", scores, text fields, and exclude_reasons.
 - Select the best clean source image yourself; Amazon MAIN is only a hint.
 - Select only useful source-target edit pairs. Do not output all combinations.
 - A valid target must contain the same complete saleable product/package as the source.
@@ -34,10 +35,11 @@ Core policy:
 Small text and coordinates:
 - Small text = fine label text, capacity/ingredient/warning text, dense package copy, small ad callouts, icon labels.
 - OCR visible small text best-effort. Use [unreadable] for unreadable text.
-- small_text_regions MUST be coordinate objects, not names. Use normalized bbox coordinates in image space:
+- small_text_regions is required only for the selected main source image. For other images, set small_text_regions to [] unless the box is very obvious and useful.
+- For the selected main source image, small_text_regions MUST be coordinate objects, not names. Use normalized bbox coordinates in image space:
   {"region":"package front lower label","bbox":[x1,y1,x2,y2],"text":"...","legibility":"poor/partial/readable","confidence":0.0}
-  where x/y are floats from 0.0 to 1.0. Approximate boxes are OK.
-- small_text_ocr_spans should use the same region/text/legibility/confidence style; include bbox when useful.
+  where x/y are floats from 0.0 to 1.0. Only mark visible product-label small-text regions on the selected source; do not try to box all ad text or every tiny word.
+- small_text_ocr_spans should use the same region/text/legibility/confidence style; include bbox only for the selected main source when useful.
 
 Descriptions and edit instructions:
 - Keep image descriptions compact but specific: product count, placement, view, background, props, text, logo/small-text evidence, visible risks.
