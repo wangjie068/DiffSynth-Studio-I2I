@@ -62,97 +62,21 @@ def metric(label, value, cls=""):
     return f'<span class="metric {cls}"><b>{esc(label)}</b>{esc(value)}</span>'
 
 
-def valid_bbox(value):
-    if not isinstance(value, list) or len(value) != 4:
-        return None
-    try:
-        x1, y1, x2, y2 = [float(v) for v in value]
-    except (TypeError, ValueError):
-        return None
-    x1 = max(0.0, min(1.0, x1))
-    y1 = max(0.0, min(1.0, y1))
-    x2 = max(0.0, min(1.0, x2))
-    y2 = max(0.0, min(1.0, y2))
-    if x2 <= x1 or y2 <= y1:
-        return None
-    return x1, y1, x2, y2
-
-
-def small_text_region_rows(regions):
-    if not regions:
-        return '<p class="muted"><b>small text regions</b><br>none</p>'
-    rows = []
-    for index, region in enumerate(regions, 1):
-        if isinstance(region, dict):
-            bbox = region.get("bbox")
-            bbox_text = json.dumps(bbox, ensure_ascii=False) if bbox is not None else ""
-            rows.append(
-                "<tr>"
-                f"<td>{index}</td>"
-                f"<td>{esc(region.get('region'))}</td>"
-                f"<td>{esc(bbox_text)}</td>"
-                f"<td>{esc(region.get('text'))}</td>"
-                f"<td>{esc(region.get('legibility'))}</td>"
-                f"<td>{esc(region.get('confidence'))}</td>"
-                "</tr>"
-            )
-        else:
-            rows.append(
-                "<tr>"
-                f"<td>{index}</td><td></td><td></td><td>{esc(region)}</td><td></td><td></td>"
-                "</tr>"
-            )
-    return (
-        '<div class="region-table"><b>small text regions</b>'
-        '<table><tr><th>#</th><th>region</th><th>bbox</th><th>OCR text</th><th>legibility</th><th>conf</th></tr>'
-        + "".join(rows)
-        + "</table></div>"
-    )
-
-
-def image_with_regions(url: str, label: dict, image_class: str = "", show_regions: bool = True):
-    regions = label.get("small_text_regions") or []
-    boxes = []
-    if show_regions:
-        for index, region in enumerate(regions, 1):
-            if not isinstance(region, dict):
-                continue
-            bbox = valid_bbox(region.get("bbox"))
-            if not bbox:
-                continue
-            x1, y1, x2, y2 = bbox
-            boxes.append(
-                '<span class="ocr-box" '
-                f'style="left:{x1 * 100:.3f}%;top:{y1 * 100:.3f}%;'
-                f'width:{(x2 - x1) * 100:.3f}%;height:{(y2 - y1) * 100:.3f}%;" '
-                f'title="#{index} {esc(region.get("region"))}: {esc(region.get("text"))}">'
-                f"{index}</span>"
-            )
-    return (
-        f'<a class="image-wrap {esc(image_class)}" href="{esc(url)}" target="_blank">'
-        f'<img src="{esc(url)}" loading="lazy">'
-        + "".join(boxes)
-        + "</a>"
-    )
-
-
 def image_card(source_item: dict, label: dict, selected_index):
     index = label.get("image_index", source_item.get("image_index"))
     selected = index == selected_index
     url = image_url(source_item)
     variant = source_item.get("variant") or ""
     role = label.get("role") or ""
-    annotated = not label.get("_missing_annotation")
     classes = "image-card selected" if selected else "image-card"
     return f"""
     <article class="{classes}" id="img-{esc(index)}">
       <div class="image-head">
         <b>#{esc(index)} {esc(variant)}</b>
         <span>{esc(role)}</span>
-        {'<em class="warn">UNANNOTATED</em>' if not annotated else ''}
         {'<em>SELECTED SOURCE</em>' if selected else ''}
       </div>
-      {image_with_regions(url, label, show_regions=selected)}
+      <a href="{esc(url)}" target="_blank"><img src="{esc(url)}" loading="lazy"></a>
       <div class="metrics">
         {metric("S", label.get("source_candidate_score"))}
         {metric("T", label.get("target_candidate_score"))}
@@ -167,29 +91,25 @@ def image_card(source_item: dict, label: dict, selected_index):
       <p><b>visible text inventory</b><br>{esc(label.get("visible_text_inventory"))}</p>
       <p><b>logo</b><br>{span_list(label.get("logo_or_brand_transcription"))}</p>
       <p><b>small text OCR</b><br>{esc(label.get("small_text_ocr_text"))}</p>
-      {small_text_region_rows(label.get("small_text_regions"))}
       <div class="chips">{span_list(label.get("small_text_ocr_spans"))}</div>
       <p class="muted"><b>target edit</b><br>{esc(label.get("target_edit_description"))}</p>
     </article>
     """
 
 
-def pair_card(pair: dict, source_item: dict, target_item: dict, source_label: dict, target_label: dict, index: int, selected_index):
-    final_status = pair.get("final_status") or ("rejected" if pair.get("reject") else "selected")
-    status = str(final_status).upper()
-    status_class = "good" if final_status == "selected" else "bad" if final_status == "rejected" else "review"
+def pair_card(pair: dict, source_item: dict, target_item: dict, source_label: dict, target_label: dict, index: int):
+    reject = bool(pair.get("reject"))
+    status = "REJECT" if reject else "VALID"
+    status_class = "bad" if reject else "good"
     source_url = image_url(source_item)
     target_url = image_url(target_item)
-    reasons = pair.get("post_filter_reasons") or pair.get("reject_reasons") or []
+    reasons = pair.get("reject_reasons") or []
     return f"""
     <article class="pair-card {status_class}">
       <header>
         <h4>Pair #{index} <span class="{status_class}">{status}</span></h4>
         <div class="metrics">
           {metric("type", pair.get("pair_type"))}
-          {metric("model", pair.get("model_status"))}
-          {metric("post", pair.get("post_filter_status"))}
-          {metric("final", final_status)}
           {metric("identity", pair.get("identity_confidence"))}
           {metric("quality", pair.get("pair_quality_score"))}
           {metric("tier", pair.get("pair_quality_tier"))}
@@ -203,16 +123,14 @@ def pair_card(pair: dict, source_item: dict, target_item: dict, source_label: di
       <div class="pair-images">
         <div>
           <b>source #{esc(pair.get("source_image_index"))}</b>
-          {image_with_regions(source_url, source_label, "pair-image-wrap", show_regions=pair.get("source_image_index") == selected_index)}
+          <a href="{esc(source_url)}" target="_blank"><img src="{esc(source_url)}" loading="lazy"></a>
         </div>
         <div>
           <b>target #{esc(pair.get("target_image_index"))}</b>
-          {image_with_regions(target_url, target_label, "pair-image-wrap", show_regions=False)}
+          <a href="{esc(target_url)}" target="_blank"><img src="{esc(target_url)}" loading="lazy"></a>
         </div>
       </div>
-      {'<p class="reject"><b>post filter reasons</b><br>' + esc(", ".join(reasons)) + '</p>' if reasons else ''}
-      <p><b>review reasons</b><br>{esc(pair.get("review_reasons"))}</p>
-      <p><b>model reject diagnostics</b><br>{esc(pair.get("model_reject_reasons"))}</p>
+      {'<p class="reject"><b>reject reasons</b><br>' + esc(", ".join(reasons)) + '</p>' if reasons else ''}
       <p><b>model quality judgement</b><br>{esc(pair.get("pair_quality_judgement"))}</p>
       <p><b>failure modes</b><br>{esc(pair.get("pair_failure_modes"))}</p>
       <p><b>instruction</b><br>{esc(pair.get("edit_instruction"))}</p>
@@ -227,7 +145,7 @@ def pair_card(pair: dict, source_item: dict, target_item: dict, source_label: di
     """
 
 
-def product_section(record: dict, show_all_pairs: bool):
+def product_section(record: dict, show_rejected: bool):
     product_id = record.get("product_id")
     ann = record.get("annotation") or {}
     product = ann.get("product") or {}
@@ -243,20 +161,12 @@ def product_section(record: dict, show_all_pairs: bool):
     }
     pairs = ann.get("pairs") or []
     valid_pairs = record.get("valid_pairs") or ann.get("valid_pairs") or []
-    visible_pairs = pairs if show_all_pairs else valid_pairs
+    visible_pairs = pairs if show_rejected else valid_pairs
     product_url = metadata.get("product_page_url") or raw.get("product_page_url") or ""
     title = metadata.get("title") or raw.get("title") or ""
-    all_image_indexes = sorted(
-        set(source_images) | set(image_labels),
-        key=lambda idx: idx if idx is not None else 999,
-    )
     images_html = "\n".join(
-        image_card(
-            source_images.get(idx, {}),
-            image_labels.get(idx, {"image_index": idx, "_missing_annotation": True}),
-            selected_index,
-        )
-        for idx in all_image_indexes
+        image_card(source_images.get(idx, {}), label, selected_index)
+        for idx, label in sorted(image_labels.items(), key=lambda kv: kv[0] if kv[0] is not None else 999)
     )
     pair_html = "\n".join(
         pair_card(
@@ -266,7 +176,6 @@ def product_section(record: dict, show_all_pairs: bool):
             image_labels.get(pair.get("source_image_index"), {}),
             image_labels.get(pair.get("target_image_index"), {}),
             index,
-            selected_index,
         )
         for index, pair in enumerate(visible_pairs)
     )
@@ -279,8 +188,7 @@ def product_section(record: dict, show_all_pairs: bool):
           <p class="muted">{esc(product.get("notes"))}</p>
         </div>
         <div class="summary-box">
-          {metric("images", len(source_images))}
-          {metric("annotated", len(image_labels))}
+          {metric("images", len(image_labels))}
           {metric("pairs", len(pairs))}
           {metric("valid", len(valid_pairs), "good")}
           {metric("source", selected_index)}
@@ -299,15 +207,14 @@ def product_section(record: dict, show_all_pairs: bool):
       </details>
       <h3>Images</h3>
       <div class="image-grid">{images_html}</div>
-      <h3>Pairs {'(all)' if show_all_pairs else '(selected only)'}</h3>
+      <h3>Pairs {'(all)' if show_rejected else '(valid only)'}</h3>
       <div class="pair-grid">{pair_html or '<p class="muted">No pairs to show.</p>'}</div>
     </section>
     """
 
 
 def build_html(records: list[dict], args, stats: dict, rejects: collections.Counter):
-    show_all_pairs = not args.selected_only
-    sections = "\n".join(product_section(record, show_all_pairs) for record in records)
+    sections = "\n".join(product_section(record, args.show_rejected) for record in records)
     reject_rows = "\n".join(
         f"<tr><td>{esc(reason)}</td><td>{count}</td></tr>"
         for reason, count in rejects.most_common(30)
@@ -326,7 +233,6 @@ a {{ color:#164f9f; }}
 .metric {{ display:inline-flex; gap:6px; border:1px solid #d6d6d1; background:#fff; border-radius:6px; padding:4px 7px; font-size:12px; }}
 .metric.good, .good {{ color:#087443; border-color:#97c9b0; }}
 .bad {{ color:#b42318; border-color:#f0a8a1; }}
-.review {{ color:#9a5b00; border-color:#e7c27f; }}
 .muted {{ color:#666; }}
 .product {{ margin:18px 22px 28px; background:#fff; border:1px solid #ddd; border-radius:8px; padding:18px; }}
 .product-head {{ display:flex; justify-content:space-between; gap:16px; border-bottom:1px solid #eee; padding-bottom:12px; }}
@@ -341,24 +247,17 @@ pre {{ white-space:pre-wrap; word-break:break-word; font-size:12px; background:#
 .image-card.selected {{ border:3px solid #168a52; }}
 .image-head {{ display:flex; gap:8px; justify-content:space-between; align-items:center; font-size:13px; min-height:24px; }}
 .image-head em {{ font-size:11px; color:#087443; font-style:normal; font-weight:700; }}
-.image-head em.warn {{ color:#9a5b00; }}
-.image-wrap {{ position:relative; display:block; width:fit-content; max-width:100%; margin:8px auto; background:#fff; }}
-.image-wrap img {{ max-width:100%; max-height:260px; width:auto; height:auto; object-fit:contain; display:block; margin:0; }}
-.pair-image-wrap img {{ max-height:230px; }}
-.ocr-box {{ position:absolute; border:2px solid #e11d48; background:rgba(225,29,72,0.12); color:#fff; font-size:11px; font-weight:800; line-height:1; padding:2px 3px; box-sizing:border-box; text-shadow:0 1px 2px #000; overflow:hidden; }}
+img {{ max-width:100%; height:220px; object-fit:contain; background:#fff; display:block; margin:8px auto; }}
 .image-card p, .pair-card p {{ font-size:12px; line-height:1.35; }}
 .chips {{ display:flex; flex-wrap:wrap; gap:4px; }}
 .chip {{ display:inline-block; border:1px solid #d7d7d7; border-radius:5px; padding:3px 5px; margin:2px; font-size:11px; background:#fbfbfb; }}
-.region-table {{ margin-top:8px; font-size:12px; }}
-.region-table table {{ margin-top:4px; width:100%; }}
-.region-table td, .region-table th {{ vertical-align:top; }}
 .pair-grid {{ display:grid; grid-template-columns:repeat(auto-fill,minmax(430px,1fr)); gap:14px; }}
 .pair-card {{ border:1px solid #ddd; border-radius:8px; padding:12px; background:#fff; }}
 .pair-card.good {{ border-left:5px solid #168a52; }}
 .pair-card.bad {{ border-left:5px solid #c3372b; }}
-.pair-card.review {{ border-left:5px solid #c98213; }}
 .pair-card h4 {{ margin:0 0 8px; }}
 .pair-images {{ display:grid; grid-template-columns:1fr 1fr; gap:10px; }}
+.pair-images img {{ height:210px; }}
 .reject {{ background:#fff1ef; border:1px solid #f2b8b2; border-radius:6px; padding:8px; }}
 table {{ border-collapse:collapse; font-size:12px; }}
 td, th {{ border:1px solid #ddd; padding:4px 7px; }}
@@ -369,11 +268,10 @@ td, th {{ border:1px solid #ddd; padding:4px 7px; }}
   <h1>Amazon Product Annotation Preview</h1>
   <div class="stats">
     {metric("products", stats["products"])}
-    {metric("images", stats["source_images"])}
-    {metric("annotated", stats["images"])}
+    {metric("images", stats["images"])}
     {metric("pairs", stats["pairs"])}
     {metric("valid pairs", stats["valid_pairs"], "good")}
-    {metric("show", "all pairs" if show_all_pairs else "selected only")}
+    {metric("show", "all pairs" if args.show_rejected else "valid only")}
   </div>
   <details>
     <summary>Top reject reasons</summary>
@@ -391,8 +289,7 @@ def parse_args():
     parser.add_argument("--annotations", "--input", dest="annotations", type=Path, required=True)
     parser.add_argument("--out", "--output", dest="out", type=Path, required=True)
     parser.add_argument("--max-products", type=int, default=0, help="0 means all products.")
-    parser.add_argument("--selected-only", action="store_true", help="Only show final_status=selected pairs.")
-    parser.add_argument("--show-rejected", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--show-rejected", action="store_true", help="Show all pairs instead of valid pairs only.")
     return parser.parse_args()
 
 
@@ -404,7 +301,6 @@ def main():
     for record in iter_jsonl(args.annotations):
         ann = record.get("annotation") or {}
         stats["products"] += 1
-        stats["source_images"] += len(record.get("source_images") or [])
         stats["images"] += len(ann.get("images") or [])
         stats["pairs"] += len(ann.get("pairs") or [])
         stats["valid_pairs"] += len(record.get("valid_pairs") or ann.get("valid_pairs") or [])

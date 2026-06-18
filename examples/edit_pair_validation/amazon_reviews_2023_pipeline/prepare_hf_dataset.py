@@ -15,9 +15,6 @@ def iter_jsonl(path: Path):
 
 
 def is_valid_pair(pair: dict, include_warnings: bool):
-    final_status = pair.get("final_status")
-    if final_status is not None:
-        return final_status == "selected"
     if pair.get("reject"):
         return False
     if pair.get("post_filter_warnings") and not include_warnings:
@@ -76,11 +73,7 @@ def pair_record(product_record: dict, pair: dict, pair_index: int):
         "small_text_preservation": pair.get("small_text_preservation"),
         "small_text_generation": pair.get("small_text_generation"),
         "transformation_magnitude": pair.get("transformation_magnitude"),
-        "model_status": pair.get("model_status"),
-        "post_filter_status": pair.get("post_filter_status"),
-        "post_filter_reasons": pair.get("post_filter_reasons", []),
-        "final_status": pair.get("final_status"),
-        "selected_for_training": pair.get("selected_for_training"),
+        "post_filter_warnings": pair.get("post_filter_warnings", []),
     }
 
 

@@ -84,11 +84,7 @@ def iter_pair_records(path: Path):
                 "target_visible_text_to_generate": pair.get("target_visible_text_to_generate"),
                 "text_rendering_requirements": pair.get("text_rendering_requirements"),
                 "transformation_magnitude": pair.get("transformation_magnitude"),
-                "model_status": pair.get("model_status"),
-                "post_filter_status": pair.get("post_filter_status"),
-                "post_filter_reasons": pair.get("post_filter_reasons", []),
-                "final_status": pair.get("final_status"),
-                "selected_for_training": pair.get("selected_for_training"),
+                "post_filter_warnings": pair.get("post_filter_warnings", []),
             }
 
 
@@ -219,13 +215,9 @@ def keep_pair(record, args):
     prompt = record.get("edit_instruction_detailed") or record.get("edit_instruction")
     target_text_inventory = image_visible_text_inventory(target_label)
     instruction_text = " ".join(flatten_text_values(record.get("edit_instruction_detailed") or pair.get("edit_instruction_detailed")))
-    final_status = record.get("final_status") or pair.get("final_status")
-    post_filter_status = record.get("post_filter_status") or pair.get("post_filter_status")
-    if final_status and final_status != "selected":
+    if pair.get("reject"):
         return False
-    if post_filter_status == "fail":
-        return False
-    if not final_status and pair.get("reject"):
+    if record.get("post_filter_warnings") and not args.include_warning_pairs:
         return False
     if args.bottle_like_only and not product.get("is_bottle_like"):
         return False
@@ -338,7 +330,7 @@ def parse_args():
     parser.add_argument("--require-model-high-quality-pair", action="store_true")
     parser.add_argument("--min-pair-quality-score", type=float, default=0.0)
     parser.add_argument("--pair-type-regex", default="main_to_ad|main_to_angle|main_to_lifestyle|angle_to_ad")
-    parser.add_argument("--reject-complex-targets", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--reject-complex-targets", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--max-source-product-instance-count", type=float, default=2)
     parser.add_argument("--max-target-product-instance-count", type=float, default=1)
     parser.add_argument("--product-domain-regex", default="")
@@ -426,11 +418,6 @@ def main():
             "target_visible_text_to_generate": record.get("target_visible_text_to_generate"),
             "text_rendering_requirements": record.get("text_rendering_requirements"),
             "transformation_magnitude": record.get("transformation_magnitude"),
-            "model_status": record.get("model_status"),
-            "post_filter_status": record.get("post_filter_status"),
-            "post_filter_reasons": record.get("post_filter_reasons"),
-            "final_status": record.get("final_status"),
-            "selected_for_training": record.get("selected_for_training"),
             "source_url": record.get("source_url"),
             "target_url": record.get("target_url"),
         })

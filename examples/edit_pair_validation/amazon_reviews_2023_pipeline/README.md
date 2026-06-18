@@ -66,20 +66,9 @@ preservation score, aesthetic improvement score, small-text change type,
 preservation/generation notes, detailed edit instructions, and
 `small_text_training_value_score`.
 
-Decision policy:
-
-- The model is the primary quality judge through structured fields such as
-  `is_high_quality_pair`, `pair_quality_score`, `pair_quality_tier`,
-  `pair_quality_judgement`, `identity_confidence`, logo/small-text scores, and
-  target quality/aesthetic scores.
-- Model free-text diagnostics such as `model_reject_reasons` are kept for human
-  review, but they are not parsed as automatic hard filters.
-- Post-processing only applies explicit numeric/boolean gates from the command
-  line plus objective source-selection/product-level checks. It does not parse
-  natural-language descriptions to infer back view, quality, or product identity.
-- Target complexity filters are opt-in. Source complexity is controlled by
-  `--max-source-product-instance-count` because a complex source is a poor edit
-  reference even when some target images look good.
+Quality gates can also require sufficient text descriptions, detailed edit
+instructions, product identity descriptions, and preservation notes before a pair
+is accepted for training.
 
 ## 1. Local Smoke Test
 
@@ -159,6 +148,7 @@ python3 examples/edit_pair_validation/amazon_reviews_2023_pipeline/annotate_prod
   --min-pair-small-text-preservation-chars 30 \
   --min-target-small-text-ocr-chars 20 \
   --max-source-product-instance-count 2 \
+  --max-target-product-instance-count 1 \
   --require-selected-main-source \
   --workers 4 \
   --sleep 0.1
@@ -193,7 +183,7 @@ Notes:
 - `--min-pair-target-aesthetic-score 0.6` keeps targets visually polished enough for product/ad training.
 - Description length gates are intentionally moderate. The prompt asks the model for detailed visual inventories and detailed edit instructions, but the default pipeline avoids hard text-overlap filtering that would reject otherwise useful pairs.
 - `--min-target-small-text-ocr-chars 20` requires target small-text OCR content to be written out. Source OCR is useful metadata but is not a hard reject reason.
-- `--max-source-product-instance-count 2` rejects complex bundle source images. Target complexity filters are not enabled by default; add `--reject-complex-targets --max-target-product-instance-count 1` only for a stricter pass.
+- `--max-source-product-instance-count 2` rejects complex bundle source images. A target may keep the same product count as the selected source, but should not introduce extra product instances or multi-view/swatch/collage layouts.
 - Existing output is resumable; without `--overwrite`, already annotated ASINs are skipped.
 - For multiple API keys, set `GPT_API_KEYS=key1,key2` in `.env`, or pass `--api-keys 'key1,key2'`.
 - `--workers` controls concurrent product-level model calls. Keep it no larger than your key/rate-limit capacity.
@@ -288,9 +278,7 @@ data/amazon_reviews_2023/qwen_image_edit_train/
 
 For high precision training data:
 
-- `final_status == selected`
-- `model_status == valid`
-- `post_filter_status == pass`
+- `reject == false`
 - `pair_type in main_to_ad, main_to_angle, main_to_lifestyle, angle_to_ad`
 - `transformation_magnitude in low, medium`
 - `identity_confidence >= 0.85`
@@ -306,4 +294,4 @@ For high precision training data:
 - `target.full_product_visible == true`
 - `annotation.images[*].small_text_legibility in partial/readable` for manual inspection subsets.
 
-Pairs with `final_status == review` are retained in the annotation dataset for manual inspection but are not exported by default for training.
+Pairs with `post_filter_warnings` are retained in the annotation dataset. Exclude them by default for training, or include them with `--include-warning-pairs` after review.
