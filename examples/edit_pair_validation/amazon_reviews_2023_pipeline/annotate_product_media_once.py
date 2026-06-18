@@ -18,85 +18,40 @@ DEFAULT_API_VERSION = "2024-03-01-preview"
 DEFAULT_MODEL = "gpt-5.4-mini-2026-03-17"
 
 
-ANNOTATION_PROMPT = """# Role
-You are an expert e-commerce visual dataset annotator for image-to-image edit training.
+ANNOTATION_PROMPT = """You are an e-commerce visual annotator for image-to-image edit training.
 
-# Task
-You will receive metadata and numbered images from ONE Amazon product/ASIN.
-Do all annotation in ONE pass:
-1. Understand the product.
-2. Label each image role, quality, logo/brand evidence, and small-text OCR properties.
-3. Explicitly choose the best main source image. Do not assume Amazon's MAIN variant is automatically the source.
-4. Judge whether each candidate is truly high-quality training data.
-5. Select all useful image-edit pair candidates without forcing a fixed count.
-6. Write detailed edit instructions for the selected pairs.
+Return STRICT JSON only. Annotate one Amazon product/ASIN in one pass.
 
-# Decision Contract
-- Your structured quality fields are the main signal: is_high_quality_pair, pair_quality_score, pair_quality_tier, pair_quality_judgement, identity_confidence, logo_preservation_score, small_text_training_value_score, target quality, and target aesthetics.
-- reject/model_reject_reasons are diagnostic notes for review. They should explain risks, but downstream code will not treat free-form reject text as an automatic hard rejection.
-- Be internally consistent: if is_high_quality_pair=true and pair_quality_tier is good/excellent, do not add reject reasons that contradict the quality judgement.
-- Use structured enum fields for objective facts such as product_view, view_change, layout_type, layout_complexity, product_instance_count, full_product_visible, and same_product_confidence. Do not rely on prose to encode these decisions.
+Core policy:
+- Select the best clean source image yourself; Amazon MAIN is only a hint.
+- Select only useful source-target edit pairs. Do not output all combinations.
+- A valid target must contain the same complete saleable product/package as the source.
+- Preserve product identity: brand/logo, front label, package shape, color, cap/pump/tube geometry, and useful small text.
+- Reject/down-score missing/tiny/incidental products, front-to-back view changes, brand/package drift, high transformation, low aesthetics, manuals, size charts, pure ingredient panels, before/after-only panels, swatch boards, flat decorative sheets, nail stickers/decals/tattoos.
+- Humans/faces/hands are OK only when the complete product remains clear and dominant.
+- Model quality fields are the main signal. Free-text reject reasons are diagnostics, not hard filters.
 
-# Important Constraints
-- The input images are supposed to belong to the same product, but some may show bundles, details, charts, or unrelated accessories. Do not assume all are equally useful.
-- Do NOT discard data. Use labels, scores, and reject reasons.
-- Do NOT output all pair combinations. Select all genuinely useful pair candidates, and reject uncertain ones with reasons.
-- Prefer a clean complete product/source image to a moderate target image, but explicitly select it by image_index. Amazon's variant=MAIN is only a hint, not a decision.
-- A valid target image MUST contain the complete same physical product/package/model from the source image. The product can be recomposed into an ad/lifestyle/graphic layout, but the full saleable product must remain visible as a clear primary subject.
-- Do not create a valid pair when the target product is cropped, partially hidden, absent, tiny, incidental, or only implied by eyelashes, eyes, skin, ingredients, effects, claims, charts, or before/after examples.
-- Avoid pairs where the target is a pure manual, ingredient panel, size chart, zoomed texture, claim graphic, before/after panel without a dominant product, or a scene where the product becomes incidental.
-- Humans, faces, or hands are allowed when the complete product remains clearly visible and product-dominant. Do not reject a pair only because a person appears.
-- Keep previous consistency requirements: source and target must be the same product/variant/package, with no brand swap, no product identity drift, no missing full product, no high transformation, and no target where the product is incidental.
-- Do not select front-to-back or front-to-rear-view edits. A valid target should preserve the same usable front/logo/small-text surface, not turn a front package shot into a back-label or rear-panel product view.
-- The main training goal is beautiful product-image editing while preserving the product LOGO, brand marks, package identity, and small text. Prefer pairs that improve layout/aesthetics without changing or corrupting the product identity.
-- Prefer pairs that preserve, move, resize, or add readable small text while keeping the complete product. Do not count bottle shape alone as the goal.
-- Small text means fine product-label text, ingredient/capacity text, warning text, dense package copy, small brand/subtitle text, or small ad callouts. Do not count only large headlines as small text.
-- OCR small text explicitly. Use best-effort transcription only for visible text. If a region is unreadable, write "[unreadable]" and mark low confidence instead of hallucinating.
-- For every image with visible text, transcribe the text inventory explicitly. Separate product/package text from ad headline, body copy, benefit list, icon labels, badges, callouts, and disclaimer text.
-- Description and instruction fields must name the important visible words, not only say "headline", "benefit icons", "small text", or "branding". For example, write the headline text and icon labels such as "For Longer, Stronger Hair", "Natural", "Vegan", "Cruelty Free", "Gluten Free", "Non-Toxic", and "Palm Free" when visible.
-- edit_instruction_detailed must be long-form and directly usable as a training prompt. It should include: exact product identity to preserve, exact source package/logo/small text to preserve when readable, target composition, target visible marketing text to generate, target icon/benefit/callout labels, typography/color/style, lighting/background, and explicit forbidden changes.
-- Exclude products that are themselves flat decorative sheets, nail-art sticker/decal sheets, temporary tattoo sheets, pattern sheets, or swatch-like design collections. These do not provide stable product LOGO/package text preservation training.
-- Reject or down-score pairs where the logo, brand name, key package text, or fine label text is missing, heavily distorted, replaced by a different brand, or visually implausible.
-- A good target should be aesthetically useful: cleaner composition, nicer lighting/background, better ad layout, or more polished product presentation.
-- Description fields must be specific and sufficient. Avoid generic one-line descriptions; include exact product identity, object count, product placement, camera/view, background/layout, props, material/texture/finish, lighting/shadow, text/graphics, logo/brand evidence, small-text regions, aesthetic qualities, and any visible risks.
-- detailed_description should let a human imagine the image without seeing it. Do not write only "polished ad-style image"; describe what is in the image, where it is, what text is present, what props/effects appear, and how the product looks.
-- Be strict when judging high-quality pairs. A high-quality pair must have a good source, a visually polished target, complete same product, no front-to-back view change, preserved logo/brand identity, useful small-text supervision, and a detailed actionable instruction. If any of these are weak, set is_high_quality_pair=false and explain why.
-- Do not select complex reconstruction targets: no multi-panel collage, no multi-view product grid, no color/variant comparison chart, no swatch board, and no target containing many duplicated product instances. The target should be one coherent polished product image/ad scene, not a product-detail infographic page.
-- Keep transformations controlled: low or medium transformation is preferred over high.
-- Videos are not provided to you. Ignore video URLs.
+Small text and coordinates:
+- Small text = fine label text, capacity/ingredient/warning text, dense package copy, small ad callouts, icon labels.
+- OCR visible small text best-effort. Use [unreadable] for unreadable text.
+- small_text_regions MUST be coordinate objects, not names. Use normalized bbox coordinates in image space:
+  {"region":"package front lower label","bbox":[x1,y1,x2,y2],"text":"...","legibility":"poor/partial/readable","confidence":0.0}
+  where x/y are floats from 0.0 to 1.0. Approximate boxes are OK.
+- small_text_ocr_spans should use the same region/text/legibility/confidence style; include bbox when useful.
 
-# Detailed Instruction Requirements
-For each valid pair, write edit_instruction_detailed in the style of a complete training prompt, not a short caption.
-It must cover:
-- Source identity reference: exact product type, color, material/finish, package shape, cap/pump/nozzle, label design, brand/logo words, key package text, and product proportions to preserve.
-- Target composition: square/portrait/landscape if apparent, product position, scale, orientation, crop, negative space, background, props, graphics, icons, ingredient elements, human/body parts if any, and whether shadows/reflections are needed.
-- Target text design: exact visible headline/body/list/icon/badge text, typography style, color, hierarchy, and placement.
-- Aesthetic direction: commercial style, lighting, color palette, realism level, premium/clean/lifestyle/editorial feeling, and Amazon listing suitability.
-- Forbidden changes: no product identity drift, no back/rear view switch, no missing product, no logo/text corruption, no extra unrelated product, no unreadable key text.
-If the target contains little or no ad text, still describe the full visual transformation in detail: camera, pose, lighting, background, props, texture, product surface, and exact preservation requirements.
+Descriptions and edit instructions:
+- Keep image descriptions compact but specific: product count, placement, view, background, props, text, logo/small-text evidence, visible risks.
+- edit_instruction_detailed must be a training prompt, not a caption. Include source identity to preserve, target layout, product position/scale/orientation, props/effects, exact visible target text when readable, typography/color/style, lighting, and forbidden identity changes.
 
-# Detailed Instruction Examples
-Bad, too vague:
-"Use the clean source product and compose a bright white promotional graphic similar to the target. Keep the package front text readable and add ingredient callouts. The final image should still be product-dominant."
+Good detailed instruction style:
+"Use the source as the exact product identity reference. Preserve the same white serum tube, slim cap, black wand, front label typography, package proportions, and readable brand/product text. Transform it into a square premium beauty ad on a bright white background. Place the product group on the left third with soft shadows. Add a cropped eye image on the upper right and three gold ingredient callouts with small square thumbnails beneath them. Keep the product large, front-facing, complete, and logo-readable. Do not switch to a back view, crop away the applicator, invent a new brand, distort small text, or turn it into a busy collage."
 
-Good, detailed serum/eye ad instruction:
-"Use the source as the exact product identity reference. Preserve the same white eyelash-growth serum tube, slim cylindrical cap, separate black wand/applicator, white box if visible, vertical gold/black label typography, package proportions, front-facing readable brand and product text, and clean cosmetic packaging finish. Transform the simple product packshot into a polished square Amazon beauty advertising graphic on a bright white background with soft studio lighting and very light shadows. Place the serum tube, wand, and package group on the left third of the canvas, keeping the product large enough that the front label remains readable and the cap/wand styling is not altered. On the upper right, add a cropped close-up eye/eyelash beauty image with a soft natural skin tone and glossy lashes, positioned as a premium usage-result visual rather than replacing the product. Across the right side, create three ingredient/care callouts in elegant gold text with small square thumbnail images underneath each callout; keep the callouts aligned in a clean editorial grid with generous white space. Preserve the exact source product identity, logo, label zones, white/gold packaging palette, and complete saleable product shape. Do not switch to a back view, do not crop away the tube or wand, do not invent a new brand, do not distort the small package text, and do not turn the target into a busy multi-panel infographic."
+Enums:
+- image role: main_product, alternate_angle, advertising_layout, lifestyle, infographic, detail_closeup, packaging_text, bundle_or_set, instruction_manual, size_chart, before_after, swatch_or_texture, bad_or_unclear
+- pair_type: main_to_ad, main_to_angle, main_to_lifestyle, main_to_infographic, main_to_detail, angle_to_ad, bad_or_uncertain
+- scores are 0.0-1.0. pair_quality_score >=0.8 excellent, 0.7-0.8 good, 0.5-0.7 borderline, <0.5 bad.
 
-Good, detailed lip care poster instruction:
-"Use the reference image as the exact product identity reference. Preserve the same translucent yellow honey lip care squeeze tube, yellow gel-like material, black vertical branding text, tube shape, cap texture, product proportions, and honey/propolis skincare feeling. Transform the original still-life product image into a premium minimalist skincare advertising poster in a square 1:1 composition with a clean white or soft light-gray background and lots of negative space. Place the product on the right side, tilted diagonally as if suspended by a thin metal dropper or hanging wire from the top. The tube opening should point downward and slowly squeeze glossy golden honey-like lip serum into a small transparent glass jar below; make the liquid viscous, translucent, realistic, and highlighted with natural dripping motion. On the left side, create a clean editorial text layout with a soft pink headline reading \"Ampule-Infused Lip Care\". Under it, add smaller black text reading \"Get honey-glow lip with ultra-dewy hydration\". Add a neat benefit list reading \"+ Dead skin cells\", \"+ Wrinkles\", \"+ Elasticity\", \"+ Hydration\", and \"+ Glow\". Use modern beauty brand typography, clear text hierarchy, a pink headline, black body text, soft studio lighting, realistic shadows, premium commercial photography, sharp product details, and glossy honey texture. Do not change the product logo, tube geometry, material color, readable package text, or front-facing product identity."
-
-# Image Roles
-Use one of:
-main_product, alternate_angle, advertising_layout, lifestyle, infographic, detail_closeup,
-packaging_text, bundle_or_set, instruction_manual, size_chart, before_after, swatch_or_texture,
-bad_or_unclear
-
-# Pair Types
-Use one of:
-main_to_ad, main_to_angle, main_to_lifestyle, main_to_infographic, main_to_detail,
-angle_to_ad, bad_or_uncertain
-
-# Return STRICT JSON only, no markdown
+Required JSON shape:
 {
   "product": {
     "asin": "string",
@@ -105,109 +60,100 @@ angle_to_ad, bad_or_uncertain
     "form_factor": "bottle/jar/tube/box/pouch/device/accessory/kit/container/card/unknown",
     "brand": "string or unknown",
     "has_logo_or_brand": true,
-    "logo_or_brand_notes": "visible logo/brand mark evidence and whether it is useful for preservation training",
+    "logo_or_brand_notes": "brief evidence",
     "has_small_text": true,
     "small_text_training_potential": "none/low/medium/high",
-    "small_text_notes": "where useful small text appears across the product images",
+    "small_text_notes": "brief evidence",
     "is_suitable_logo_text_product": true,
     "logo_text_product_suitability_score": 0.0,
     "product_quality_for_training_score": 0.0,
-    "product_quality_judgement": "why this product is or is not suitable for high-quality logo/small-text/aesthetic product editing training",
+    "product_quality_judgement": "brief judgement",
     "is_flat_decorative_sheet_or_sticker": false,
     "unsuitable_product_reasons": [],
     "usable_for_i2i": true,
     "product_consistency_risk": "low/medium/high",
-    "notes": "short reason"
+    "notes": "short"
   },
   "source_selection": {
     "selected_main_source_image_index": 0,
     "selected_main_source_image_id": "string",
     "selected_source_is_amazon_main_variant": true,
     "selection_confidence": 0.0,
-    "selection_reason": "why this image is the best clean complete source, considering full product visibility, logo/text readability, quality, and identity consistency",
-    "rejected_source_candidates": [
-      {
-        "image_index": 1,
-        "reason": "why this image is not the best source"
-      }
-    ]
+    "selection_reason": "brief reason",
+    "rejected_source_candidates": [{"image_index": 1, "reason": "brief reason"}]
   },
   "images": [
     {
       "image_index": 0,
       "image_id": "string",
-      "detailed_description": "2-4 sentences describing the full visible content, product placement, background, text/graphics, props, and any visible issues",
-      "product_identity_description": "detailed description of the visible product/package/model/color/shape/logo evidence",
-      "target_edit_description": "detailed description of what an image-editing model would need to create if this image is used as target, including layout, product position, background, visible text, and small-text requirements",
-      "visual_inventory": {
-        "product_objects": ["what product objects are visible and how many"],
-        "product_pose_and_camera": "front/angled/side view, orientation, crop, scale, camera distance",
-        "composition": "where the product, props, graphics, and text sit in the frame",
-        "background_and_surface": "background color/type, tabletop/floor/reflection/shadow if visible",
-        "props_and_effects": ["mint leaves, flowers, ingredient cutouts, liquid splash, glow, icons, human/hand/face, etc."],
-        "materials_and_textures": ["plastic, glass, metallic cap, glossy serum, matte label, transparent liquid, etc."],
-        "lighting_and_style": "studio/lifestyle/editorial/ad style, softness, shadows, color palette"
-      },
       "role": "main_product",
+      "recommended_use": "train/validation/review_only/exclude",
       "source_candidate_score": 0.0,
-      "selected_as_main_source": false,
-      "main_source_rank": 1,
-      "main_source_reason": "why this image is or is not suitable as the selected source",
       "target_candidate_score": 0.0,
       "quality_score": 0.0,
       "aesthetic_score": 0.0,
+      "selected_as_main_source": false,
+      "main_source_rank": 1,
+      "main_source_reason": "brief reason",
+      "detailed_description": "compact specific description",
+      "product_identity_description": "package/model/logo/color/shape evidence",
+      "target_edit_description": "compact target creation description",
+      "visual_inventory": {
+        "product_objects": ["object count and type"],
+        "product_pose_and_camera": "view/orientation/crop/scale",
+        "composition": "layout",
+        "background_and_surface": "background/surface/shadow",
+        "props_and_effects": ["props/effects"],
+        "materials_and_textures": ["materials/textures"],
+        "lighting_and_style": "style"
+      },
       "product_view": "front/back/side/angled_front/top/multi_view/unknown",
       "full_product_visible": true,
       "main_product_visibility": 0.0,
+      "same_product_confidence": 0.0,
       "background_type": "white/transparent/studio/lifestyle/graphic/cluttered/unknown",
       "layout_type": "single_product/product_with_props/multi_panel/collage/text_heavy_ad/unknown",
       "layout_complexity": "simple/moderate/complex",
       "has_multiple_product_views": false,
       "has_color_or_variant_swatches": false,
-      "text_density": "none/low/medium/high",
-      "has_marketing_text": true,
-      "has_logo_or_brand": true,
-      "logo_or_brand_regions": ["package front", "cap", "box front"],
-      "logo_or_brand_legibility": "none/poor/partial/readable",
-      "logo_or_brand_transcription": ["best-effort visible logo or brand text"],
-      "has_small_text": true,
-      "small_text_density": "none/low/medium/high",
-      "small_text_regions": ["package front", "package side", "bottom label", "ad callout"],
-      "small_text_legibility": "none/poor/partial/readable",
-      "small_text_transcription": ["best-effort short snippets of readable small text, not full OCR"],
-      "small_text_ocr_text": "best-effort OCR string for visible small text only; use [unreadable] for unreadable regions and do not invent text",
-      "small_text_ocr_spans": [
-        {
-          "region": "package front lower label",
-          "text": "best-effort OCR text or [unreadable]",
-          "legibility": "poor/partial/readable",
-          "confidence": 0.0,
-          "is_exact": false
-        }
-      ],
-      "visible_text_inventory": {
-        "product_package_text": ["exact readable product/package words, brand, subtitle, size, claims"],
-        "ad_headlines": ["exact headline text visible in the image"],
-        "ad_body_copy": ["exact body or paragraph copy visible in the image"],
-        "benefit_list_items": ["exact benefit list items visible in the image"],
-        "icon_labels": ["exact icon labels visible in the image"],
-        "badges_or_callouts": ["exact badge, seal, sticker, or small callout text"],
-        "disclaimers_or_other_text": ["exact other visible text, or [unreadable] when present but illegible"]
-      },
-      "small_text_importance": "none/low/medium/high",
-      "small_text_risk": "none/low/medium/high",
-      "has_human": false,
-      "has_face": false,
-      "has_hand": false,
       "has_multiple_products": false,
       "product_instance_count": 1,
       "is_bundle_or_set": false,
       "is_closeup": false,
       "is_instructional": false,
       "is_low_resolution_or_blurry": false,
-      "same_product_confidence": 0.0,
-      "visible_text": ["best-effort visible brand/package text"],
-      "recommended_use": "train/validation/review_only/exclude",
+      "has_human": false,
+      "has_face": false,
+      "has_hand": false,
+      "text_density": "none/low/medium/high",
+      "has_marketing_text": true,
+      "has_logo_or_brand": true,
+      "logo_or_brand_regions": ["package front"],
+      "logo_or_brand_legibility": "none/poor/partial/readable",
+      "logo_or_brand_transcription": ["visible brand/logo words"],
+      "has_small_text": true,
+      "small_text_density": "none/low/medium/high",
+      "small_text_regions": [
+        {"region":"package front label","bbox":[0.0,0.0,1.0,1.0],"text":"best-effort","legibility":"partial","confidence":0.0}
+      ],
+      "small_text_legibility": "none/poor/partial/readable",
+      "small_text_transcription": ["short snippets"],
+      "small_text_ocr_text": "best-effort OCR string",
+      "small_text_ocr_spans": [
+        {"region":"package front label","bbox":[0.0,0.0,1.0,1.0],"text":"best-effort","legibility":"partial","confidence":0.0,"is_exact":false}
+      ],
+      "visible_text_inventory": {
+        "product_package_text": ["exact readable package words"],
+        "ad_headlines": ["exact visible headlines"],
+        "ad_body_copy": ["exact body copy"],
+        "benefit_list_items": ["exact benefits"],
+        "icon_labels": ["exact icon labels"],
+        "badges_or_callouts": ["exact callouts"],
+        "disclaimers_or_other_text": ["other text"]
+      },
+      "visible_text": ["best-effort visible text"],
+      "small_text_importance": "none/low/medium/high",
+      "small_text_risk": "none/low/medium/high",
       "exclude_reasons": []
     }
   ],
@@ -219,8 +165,8 @@ angle_to_ad, bad_or_uncertain
       "is_high_quality_pair": true,
       "pair_quality_score": 0.0,
       "pair_quality_tier": "excellent/good/borderline/bad",
-      "pair_quality_judgement": "strict judgement of whether this pair should be used for training, covering source quality, target aesthetics, product consistency, logo/small-text preservation, view consistency, and instruction quality",
-      "pair_failure_modes": ["front_to_back_view_change", "weak_logo_preservation", "low_aesthetic_value"],
+      "pair_quality_judgement": "brief strict judgement",
+      "pair_failure_modes": [],
       "identity_confidence": 0.0,
       "transformation_magnitude": "low/medium/high",
       "edit_scope_complexity": "simple/moderate/complex",
@@ -236,34 +182,22 @@ angle_to_ad, bad_or_uncertain
       "background_change": "none/white_to_graphic/white_to_lifestyle/studio_to_lifestyle/other",
       "small_text_change": "preserve_same_text/reposition_text/resize_text/add_marketing_small_text/remove_or_obscure_text/no_small_text/uncertain",
       "small_text_training_value_score": 0.0,
-      "logo_preservation": "what logo, brand wordmark, icon, or package mark should be preserved from source to target",
-      "small_text_preservation": "what exact small text, label zones, or typography should be preserved from source to target",
-      "small_text_generation": "what new small text or tiny callouts should be generated in the target, if any",
-      "source_visible_text_to_preserve": ["exact visible source words that should be preserved, including brand/logo/package text"],
-      "target_visible_text_to_generate": ["exact visible target words that should be generated, including headline/body/icon/benefit labels"],
-      "text_rendering_requirements": "specific typography, placement, size, color, legibility, and no-hallucination requirements for all visible target text",
+      "logo_preservation": "brief exact logo/brand requirements",
+      "small_text_preservation": "brief exact text/label-zone requirements",
+      "small_text_generation": "new small text/callouts if any",
+      "source_visible_text_to_preserve": ["exact source words"],
+      "target_visible_text_to_generate": ["exact target words"],
+      "text_rendering_requirements": "legibility/placement/style requirements",
       "reject": false,
-      "reject_reasons": ["legacy diagnostic reasons only; keep empty when is_high_quality_pair is true"],
-      "model_reject_reasons": ["diagnostic risks for human review; do not contradict pair_quality_judgement"],
-      "edit_instruction": "concise image editing instruction from source to target",
-      "edit_instruction_detailed": "complete detailed training prompt: preserve exact source product identity; describe target composition, object placement, camera/view, product scale/orientation, props/effects, background/surface, lighting/shadows/reflections, exact visible text and typography, aesthetic style, and forbidden changes",
-      "preservation_requirements": ["product identity", "logo/brand", "small label text", "package geometry"]
+      "reject_reasons": [],
+      "model_reject_reasons": [],
+      "edit_instruction": "concise instruction",
+      "edit_instruction_detailed": "complete training prompt",
+      "preservation_requirements": ["product identity","logo/brand","small label text","package geometry"]
     }
   ],
   "recommended_pairs_summary": "short summary"
 }
-
-# Scoring Guide
-- source_candidate_score: high for a clean complete product image suitable as source.
-- target_candidate_score: high for useful edit target: ad layout, angle change, moderate lifestyle, or informative but not overwhelming infographic.
-- pair_quality_score: strict overall training quality. Use >=0.8 only for excellent pairs, 0.7-0.8 for good pairs, 0.5-0.7 for borderline review-only pairs, and <0.5 for bad pairs.
-- identity_confidence: only high if source and target clearly show the same product/package/model.
-- If the target does not clearly show the product, set identity_confidence <= 0.65 and reject=true.
-- logo_preservation_score: high only when the target keeps the same readable logo/brand mark or clearly preserves the visible package mark.
-- small_text_training_value_score: high when the source/target pair gives useful supervision for preserving or generating readable fine text on the same complete product.
-- aesthetic_improvement_score: high when the target is a more polished, attractive product/ad image while still preserving product identity.
-- Set reject=true when identity is uncertain, transformation is too high, target is unusable, or source is not a good source.
-- recommended_use=train only for images that are clean enough and product-relevant.
 """
 
 
@@ -327,7 +261,14 @@ class CurlAzureChatClient:
             payload_path = payload_file.name
             config_path = config_file.name
         try:
-            result = subprocess.run(["curl", "--config", config_path], check=True, capture_output=True, text=True)
+            result = subprocess.run(["curl", "--config", config_path], capture_output=True, text=True)
+            if result.returncode != 0:
+                stderr = (result.stderr or "").strip()
+                stdout = (result.stdout or "").strip()
+                detail = stderr or stdout
+                if len(detail) > 2000:
+                    detail = detail[:2000] + "...[truncated]"
+                raise RuntimeError(f"curl failed with exit {result.returncode}: {detail}")
         finally:
             for path in [payload_path, config_path]:
                 try:
