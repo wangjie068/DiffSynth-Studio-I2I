@@ -31,7 +31,11 @@ Hard rules:
 - Select every high-value training pair from the chosen source, usually 1-4 if available. Do not chase coverage; skip borderline, redundant, or merely acceptable pairs.
 - The "pairs" array should contain only plausible training candidates. Do not add rejected pairs just to explain failures; describe bad targets in their image fields instead.
 - A valid target must contain the same complete saleable product/package as the source.
+- If the source shows multiple major saleable objects, for example box + bottle, box + tube, jar + outer box, or palette + shade swatches, the target must preserve those same major objects. Do not accept targets that drop the box/package, drop the bottle/jar/tube, or keep only one component.
+- Do not accept package-form substitutions: box-to-bottle, bottle-to-box, jar-to-label, product-to-front-panel, or targets where the product only appears as a printed picture on retail packaging.
 - Reject/down-score target images where the product is missing, tiny, incidental, cropped, back/rear view, a pure size chart/manual/ingredient panel, feature table, text-only infographic, swatch board, before-after-only panel, or complex multi-panel/product-grid collage.
+- Reject/down-score clean sources that include external color swatches, shade strips, smear samples, or variant comparison samples outside the product itself.
+- Do not reject a polished ad/lifestyle target only because its layout is visually rich or text-heavy, as long as the exact same complete product/package remains dominant and readable.
 - Reject/down-score side/back/rear packaging views with dense side-panel text when the source is a front package view.
 - Reject/down-score if the target appears to be a different product type, brand, formula, SKU, package, or visible product text, even if colors or category look similar.
 - Humans/faces/hands are OK only when the complete product remains clear and dominant.
@@ -640,7 +644,29 @@ def pair_declares_product_mismatch(pair: dict) -> bool:
         return False
     return bool(re.search(
         r"\b(different sku|different product|different formula|different item|different package|"
-        r"different variant|within the same bundle|same[- ]brand same[- ]line|same brand same line)\b",
+        r"different variant|within the same bundle|same[- ]brand same[- ]line|same brand same line|"
+        r"same[- ]brand pair|same line pair)\b",
+        text,
+        re.I,
+    ))
+
+
+def pair_declares_missing_source_component(pair: dict) -> bool:
+    text = " ".join(flatten_text_values([
+        pair.get("pair_quality_judgement"),
+        pair.get("pair_failure_modes"),
+        pair.get("product_text_match_notes"),
+    ]))
+    if re.search(r"\b(keep|preserv(e|ing)|contains?|includes?)\b.{0,40}\b(box|package|packaging|bottle|jar|tube)\b", text, re.I):
+        return False
+    return bool(re.search(
+        r"\b(package absent|box absent|missing (the )?(box|package|packaging|bottle|jar|tube)|"
+        r"drops? (the )?(box|package|packaging|bottle|jar|tube)|"
+        r"target drops? (the )?(box|package|packaging|bottle|jar|tube)|"
+        r"bar[- ]only|bottle[- ]only|jar[- ]only|label[- ]only|front[- ]panel|"
+        r"less direct identity match|package form|packaging transformation|"
+        r"box[- ]to[- ]bottle|bottle[- ]to[- ]box|jar[- ]to[- ]label|"
+        r"retail[- ]box (ad|target|front pack)|front pack target|printed (picture|image) on (the )?(box|package))\b",
         text,
         re.I,
     ))
@@ -651,12 +677,22 @@ def source_complexity_reasons(source: dict, args) -> list[str]:
     layout_type = str(source.get("layout_type") or "").lower()
     layout_complexity = str(source.get("layout_complexity") or "").lower()
     product_count = as_float(source.get("product_instance_count"), 1.0)
+    descriptive_text = " ".join(
+        str(value or "")
+        for value in [
+            source.get("detailed_description"),
+            source.get("target_edit_description"),
+            source.get("product_identity_description"),
+        ]
+    )
     if layout_type in {"multi_panel", "collage"}:
         reasons.append(f"blocked_source_layout:{layout_type}")
     if layout_complexity == "complex":
         reasons.append("source_layout_complexity:complex")
     if as_bool(source.get("has_color_or_variant_swatches")):
         reasons.append("source_has_color_or_variant_swatches")
+    if re.search(r"\b(color|shade|variant)?\s*(swatches?|smears?|streaks?|sample strips?)\b", descriptive_text, re.I):
+        reasons.append("source_has_external_swatch_samples")
     if product_count > args.max_source_product_instance_count:
         reasons.append(f"source_product_instance_count>{args.max_source_product_instance_count}")
     return reasons
@@ -682,8 +718,6 @@ def target_complexity_reasons(source: dict, target: dict, pair: dict, args) -> l
         reasons.append("blocked_pair_type:main_to_infographic")
     if layout_type in {"multi_panel", "collage"}:
         reasons.append(f"blocked_target_layout:{layout_type}")
-    if layout_complexity == "complex":
-        reasons.append("target_layout_complexity:complex")
     if as_bool(target.get("has_multiple_product_views")):
         reasons.append("target_has_multiple_product_views")
     if as_bool(target.get("has_color_or_variant_swatches")):
@@ -696,6 +730,14 @@ def target_complexity_reasons(source: dict, target: dict, pair: dict, args) -> l
         re.I,
     ):
         reasons.append("target_complex_collage_or_variant_layout")
+    if re.search(
+        r"\b(text[- ]only infographic|feature table|specification table|ingredient panel|size chart|"
+        r"instruction manual|label[- ]only|front[- ]panel|packaging panel|no physical product|"
+        r"product only appears as (a )?printed (picture|image))\b",
+        descriptive_text,
+        re.I,
+    ):
+        reasons.append("target_text_or_label_only_layout")
     return reasons
 
 
@@ -712,7 +754,6 @@ def postprocess_annotation(annotation: dict, args) -> tuple[dict, list[dict]]:
         "instruction_manual",
         "size_chart",
         "swatch_or_texture",
-        "detail_closeup",
         "packaging_text",
         "bad_or_unclear",
     }
@@ -777,9 +818,9 @@ def postprocess_annotation(annotation: dict, args) -> tuple[dict, list[dict]]:
             and logo_score >= args.min_pair_logo_preservation_score
             and small_text_score >= args.min_pair_small_text_training_score
             and source_quality >= args.min_pair_source_quality_score
-            and target_same >= args.min_pair_target_same_confidence
             and not product_reasons
             and not pair_declares_product_mismatch(pair)
+            and not pair_declares_missing_source_component(pair)
         )
 
         if pair_type not in allowed_pair_types:
@@ -802,11 +843,11 @@ def postprocess_annotation(annotation: dict, args) -> tuple[dict, list[dict]]:
             reasons.append(f"source_quality_score<{args.min_pair_source_quality_score}")
         if target_quality < args.min_pair_target_quality_score and not strong_model_pair:
             reasons.append(f"target_quality_score<{args.min_pair_target_quality_score}")
-        if target_visibility < args.min_pair_target_visibility:
+        if target_visibility < args.min_pair_target_visibility and not strong_model_pair:
             reasons.append(f"target_product_visibility<{args.min_pair_target_visibility}")
-        if not target_full_product_visible:
+        if not target_full_product_visible and not strong_model_pair:
             reasons.append("target_full_product_not_visible")
-        if target_same < args.min_pair_target_same_confidence:
+        if target_same < args.min_pair_target_same_confidence and not strong_model_pair:
             reasons.append(f"target_same_product_confidence<{args.min_pair_target_same_confidence}")
         if identity < args.min_pair_identity_confidence:
             reasons.append(f"pair_identity_confidence<{args.min_pair_identity_confidence}")
@@ -846,7 +887,9 @@ def postprocess_annotation(annotation: dict, args) -> tuple[dict, list[dict]]:
             reasons.append("target_side_text_panel_not_allowed")
         if pair_declares_product_mismatch(pair):
             reasons.append("model_declared_different_sku_or_product")
-        if product_text_match < 0.25:
+        if pair_declares_missing_source_component(pair):
+            reasons.append("model_declared_missing_source_component")
+        if product_text_match < 0.35:
             reasons.append("source_target_product_text_mismatch")
         reasons.extend(target_complexity_reasons(source, target, pair, args))
         if target_role in blocked_roles:

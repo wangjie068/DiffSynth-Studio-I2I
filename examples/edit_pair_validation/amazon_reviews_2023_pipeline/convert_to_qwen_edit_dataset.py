@@ -185,15 +185,33 @@ def is_complex_source(record: dict, args) -> bool:
 
 def is_complex_target(record: dict, args) -> bool:
     target_label = record.get("target_image_label") or {}
+    pair = record.get("pair") or {}
+    descriptive_text = " ".join(
+        str(value or "")
+        for value in [
+            target_label.get("detailed_description"),
+            target_label.get("target_edit_description"),
+            target_label.get("product_identity_description"),
+            pair.get("edit_instruction"),
+            pair.get("edit_instruction_detailed"),
+            pair.get("pair_quality_judgement"),
+        ]
+    )
     if str(target_label.get("layout_type") or "").lower() in {"multi_panel", "collage"}:
-        return True
-    if str(target_label.get("layout_complexity") or "").lower() == "complex":
         return True
     if target_label.get("has_multiple_product_views"):
         return True
     if target_label.get("has_color_or_variant_swatches"):
         return True
-    return False
+    return bool(re.search(
+        r"\b(multi[- ]?panel|collage|multiple views?|multi[- ]?view|variant comparison|color comparison|"
+        r"swatches?|swatch board|shade chart|color chart|product grid|grid of|several product views|"
+        r"multiple copies|duplicated bottles|comparison chart|text[- ]only infographic|feature table|"
+        r"specification table|ingredient panel|size chart|instruction manual|label[- ]only|front[- ]panel|"
+        r"packaging panel|no physical product|product only appears as (a )?printed (picture|image))\b",
+        descriptive_text,
+        re.I,
+    ))
 
 
 def keep_pair(record, args):
