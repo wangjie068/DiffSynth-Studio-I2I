@@ -28,7 +28,7 @@ Hard rules:
 - You receive N numbered images. Return exactly one "images" item for every input image_index. Do not omit bad images; mark them exclude.
 - Select the best clean source image yourself; Amazon MAIN is only a hint. Prefer a simple product-only/catalog image with the front logo/label readable as source. Images with fruit, flowers, ingredient props, lifestyle background, marketing layout, or richer styling are usually targets, not sources.
 - If two images show the same product where one is clean/product-only and the other is styled/prop/ad/lifestyle, output the pair in clean-to-styled direction, not the reverse.
-- Select all genuinely useful pairs from the chosen source. Do not stop after the single best target, but also do not output low-quality all combinations.
+- Select only high-value training pairs from the chosen source. Do not chase coverage; skip borderline, redundant, or merely acceptable pairs.
 - A valid target must contain the same complete saleable product/package as the source.
 - Reject/down-score target images where the product is missing, tiny, incidental, cropped, back/rear view, a pure size chart/manual/ingredient panel, a swatch board, a before-after-only panel, or a complex multi-panel/product-grid collage.
 - Reject/down-score side/back/rear packaging views with dense side-panel text when the source is a front package view.
@@ -629,6 +629,22 @@ def target_is_side_text_view(source: dict, target: dict, pair: dict) -> bool:
     return source_is_front and target_is_side and target_text_density in {"medium", "high"}
 
 
+def pair_declares_product_mismatch(pair: dict) -> bool:
+    text = " ".join(flatten_text_values([
+        pair.get("pair_quality_judgement"),
+        pair.get("pair_failure_modes"),
+        pair.get("product_text_match_notes"),
+    ]))
+    if re.search(r"\b(no|not|without)\s+(a\s+)?different\s+(sku|product|formula|item|package|variant)\b", text, re.I):
+        return False
+    return bool(re.search(
+        r"\b(different sku|different product|different formula|different item|different package|"
+        r"different variant|within the same bundle|same[- ]brand same[- ]line|same brand same line)\b",
+        text,
+        re.I,
+    ))
+
+
 def source_complexity_reasons(source: dict, args) -> list[str]:
     reasons = []
     layout_type = str(source.get("layout_type") or "").lower()
@@ -651,9 +667,6 @@ def target_complexity_reasons(source: dict, target: dict, pair: dict, args) -> l
     layout_complexity = str(target.get("layout_complexity") or "").lower()
     edit_scope = str(pair.get("edit_scope_complexity") or "").lower()
     pair_type = str(pair.get("pair_type") or "").lower()
-    source_count = as_float(source.get("product_instance_count"), 1.0)
-    target_count = as_float(target.get("product_instance_count"), 1.0)
-    allowed_target_count = max(args.max_target_product_instance_count, source_count)
     descriptive_text = " ".join(
         str(value or "")
         for value in [
@@ -673,14 +686,6 @@ def target_complexity_reasons(source: dict, target: dict, pair: dict, args) -> l
         reasons.append("target_layout_complexity:complex")
     if edit_scope == "complex":
         reasons.append("edit_scope_complexity:complex")
-    if (
-        not args.allow_multi_product_targets
-        and as_bool(target.get("has_multiple_products"))
-        and target_count > allowed_target_count
-    ):
-        reasons.append("target_has_extra_products")
-    if not args.allow_multi_product_targets and target_count > allowed_target_count:
-        reasons.append(f"target_product_instance_count>{allowed_target_count:g}")
     if as_bool(target.get("has_multiple_product_views")):
         reasons.append("target_has_multiple_product_views")
     if as_bool(target.get("has_color_or_variant_swatches")):
@@ -766,6 +771,18 @@ def postprocess_annotation(annotation: dict, args) -> tuple[dict, list[dict]]:
             if model_product_text_match is None
             else min(as_float(model_product_text_match, 1.0), heuristic_product_text_match)
         )
+        strong_model_pair = (
+            pair_type in {"main_to_ad", "main_to_angle", "main_to_lifestyle", "angle_to_ad", "main_to_infographic"}
+            and pair.get("is_high_quality_pair") is True
+            and pair_quality >= args.min_pair_quality_score
+            and identity >= args.min_pair_identity_confidence
+            and logo_score >= args.min_pair_logo_preservation_score
+            and small_text_score >= args.min_pair_small_text_training_score
+            and source_quality >= args.min_pair_source_quality_score
+            and target_same >= args.min_pair_target_same_confidence
+            and not product_reasons
+            and not pair_declares_product_mismatch(pair)
+        )
 
         if pair_type not in allowed_pair_types:
             reasons.append(f"unknown_pair_type:{pair_type}")
@@ -781,11 +798,11 @@ def postprocess_annotation(annotation: dict, args) -> tuple[dict, list[dict]]:
                 reasons.append(f"source_image_index_not_selected_main_source:{selected_source_index}")
         if source_score < args.min_pair_source_score:
             reasons.append(f"source_candidate_score<{args.min_pair_source_score}")
-        if target_score < args.min_pair_target_score:
+        if target_score < args.min_pair_target_score and not strong_model_pair:
             reasons.append(f"target_candidate_score<{args.min_pair_target_score}")
         if source_quality < args.min_pair_source_quality_score:
             reasons.append(f"source_quality_score<{args.min_pair_source_quality_score}")
-        if target_quality < args.min_pair_target_quality_score:
+        if target_quality < args.min_pair_target_quality_score and not strong_model_pair:
             reasons.append(f"target_quality_score<{args.min_pair_target_quality_score}")
         if target_visibility < args.min_pair_target_visibility:
             reasons.append(f"target_product_visibility<{args.min_pair_target_visibility}")
@@ -795,7 +812,7 @@ def postprocess_annotation(annotation: dict, args) -> tuple[dict, list[dict]]:
             reasons.append(f"target_same_product_confidence<{args.min_pair_target_same_confidence}")
         if identity < args.min_pair_identity_confidence:
             reasons.append(f"pair_identity_confidence<{args.min_pair_identity_confidence}")
-        if target_aesthetic < args.min_pair_target_aesthetic_score:
+        if target_aesthetic < args.min_pair_target_aesthetic_score and not strong_model_pair:
             reasons.append(f"target_aesthetic_score<{args.min_pair_target_aesthetic_score}")
         if logo_score < args.min_pair_logo_preservation_score:
             reasons.append(f"logo_preservation_score<{args.min_pair_logo_preservation_score}")
@@ -829,12 +846,14 @@ def postprocess_annotation(annotation: dict, args) -> tuple[dict, list[dict]]:
             reasons.append("target_back_or_rear_view_not_allowed")
         if target_is_side_text_view(source, target, pair):
             reasons.append("target_side_text_panel_not_allowed")
+        if pair_declares_product_mismatch(pair):
+            reasons.append("model_declared_different_sku_or_product")
         if product_text_match < 0.25:
             reasons.append("source_target_product_text_mismatch")
         reasons.extend(target_complexity_reasons(source, target, pair, args))
         if target_role in blocked_roles:
             reasons.append(f"blocked_target_role:{target_role}")
-        if pair.get("transformation_magnitude") == "high":
+        if pair.get("transformation_magnitude") == "high" and not strong_model_pair:
             reasons.append("high_transformation_magnitude")
 
         warnings = []
@@ -848,8 +867,6 @@ def postprocess_annotation(annotation: dict, args) -> tuple[dict, list[dict]]:
             and as_float(pair.get("training_value_score")) >= args.high_confidence_override_training_value
             and as_float(pair.get("edit_usefulness_score")) >= args.high_confidence_override_usefulness
             and source_quality >= args.min_pair_source_quality_score
-            and target_quality >= args.min_pair_target_quality_score
-            and target_aesthetic >= args.min_pair_target_aesthetic_score
             and logo_score >= args.min_pair_logo_preservation_score
             and small_text_score >= args.min_pair_small_text_training_score
             and source_description_chars >= args.min_image_detailed_description_chars
@@ -871,12 +888,15 @@ def postprocess_annotation(annotation: dict, args) -> tuple[dict, list[dict]]:
             and not target_complexity_reasons(source, target, pair, args)
             and target_same >= args.min_pair_target_same_confidence
             and target_role not in blocked_roles
-            and pair.get("transformation_magnitude") != "high"
+            and not pair_declares_product_mismatch(pair)
         )
         if high_confidence_override:
             overridable = {
                 f"target_candidate_score<{args.min_pair_target_score}",
                 f"target_product_visibility<{args.min_pair_target_visibility}",
+                f"target_quality_score<{args.min_pair_target_quality_score}",
+                f"target_aesthetic_score<{args.min_pair_target_aesthetic_score}",
+                "high_transformation_magnitude",
             }
             kept_reasons = []
             for reason in reasons:
