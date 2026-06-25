@@ -26,9 +26,10 @@ Goal: select high-quality source-target product image pairs for training. Keep o
 
 Hard rules:
 - You receive N numbered images. Return exactly one "images" item for every input image_index. Do not omit bad images; mark them exclude.
-- Select the best clean source image yourself; Amazon MAIN is only a hint.
+- Select the best clean source image yourself; Amazon MAIN is only a hint. Prefer the simplest complete front-facing product/package image with readable logo/text. If a clean single product exists, do not choose a more complex bottle+box/bundle/multi-object image as source.
 - Select only genuinely useful pairs. Do not output all combinations.
 - A valid target must contain the same complete saleable product/package as the source.
+- Every visible saleable product/package object in the selected source must appear in the target. A target may add props, packaging, or extra presentation elements, but it must not drop source objects such as a box, bottle, tube, jar, applicator, or kit item that was visible in the source.
 - Reject/down-score target images where the product is missing, tiny, incidental, cropped, back/rear view, a pure size chart/manual/ingredient panel, a swatch board, a before-after-only panel, or a complex multi-panel/product-grid collage.
 - Humans/faces/hands are OK only when the complete product remains clear and dominant.
 - Preserve brand/logo, front label, package shape, color, cap/pump/tube geometry, and useful small text.
@@ -163,6 +164,8 @@ Return this compact JSON shape:
       "background_change": "none/white_to_graphic/white_to_lifestyle/studio_to_lifestyle/other",
       "small_text_change": "preserve_same_text/reposition_text/resize_text/add_marketing_small_text/remove_or_obscure_text/no_small_text/uncertain",
       "small_text_training_value_score": 0.0,
+      "source_product_objects_preserved_in_target": true,
+      "source_missing_in_target_reasons": [],
       "logo_preservation": "exact logo/brand requirements",
       "small_text_preservation": "exact label/text-zone requirements",
       "small_text_generation": "new text/callouts if any",
@@ -601,7 +604,6 @@ def target_complexity_reasons(source: dict, target: dict, pair: dict, args) -> l
     pair_type = str(pair.get("pair_type") or "").lower()
     source_count = as_float(source.get("product_instance_count"), 1.0)
     target_count = as_float(target.get("product_instance_count"), 1.0)
-    allowed_target_count = max(args.max_target_product_instance_count, source_count)
     descriptive_text = " ".join(
         str(value or "")
         for value in [
@@ -621,14 +623,10 @@ def target_complexity_reasons(source: dict, target: dict, pair: dict, args) -> l
         reasons.append("target_layout_complexity:complex")
     if edit_scope == "complex":
         reasons.append("edit_scope_complexity:complex")
-    if (
-        not args.allow_multi_product_targets
-        and as_bool(target.get("has_multiple_products"))
-        and target_count > allowed_target_count
-    ):
-        reasons.append("target_has_extra_products")
-    if not args.allow_multi_product_targets and target_count > allowed_target_count:
-        reasons.append(f"target_product_instance_count>{allowed_target_count:g}")
+    if pair.get("source_product_objects_preserved_in_target") is False:
+        reasons.append("source_product_objects_missing_in_target")
+    if target_count + 0.01 < source_count:
+        reasons.append(f"target_product_instance_count<{source_count:g}")
     if as_bool(target.get("has_multiple_product_views")):
         reasons.append("target_has_multiple_product_views")
     if as_bool(target.get("has_color_or_variant_swatches")):
