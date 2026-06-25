@@ -184,25 +184,14 @@ def is_complex_source(record: dict, args) -> bool:
 
 
 def is_complex_target(record: dict, args) -> bool:
-    source_label = record.get("source_image_label") or {}
     target_label = record.get("target_image_label") or {}
-    pair = record.get("pair") or {}
-    source_count = as_float(source_label.get("product_instance_count"), 1.0)
-    target_count = as_float(target_label.get("product_instance_count"), 1.0)
-    allowed_target_count = max(args.max_target_product_instance_count, source_count)
-    if str(record.get("pair_type") or "").lower() == "main_to_infographic":
-        return True
     if str(target_label.get("layout_type") or "").lower() in {"multi_panel", "collage"}:
         return True
     if str(target_label.get("layout_complexity") or "").lower() == "complex":
         return True
-    if str(record.get("edit_scope_complexity") or pair.get("edit_scope_complexity") or "").lower() == "complex":
-        return True
     if target_label.get("has_multiple_product_views"):
         return True
     if target_label.get("has_color_or_variant_swatches"):
-        return True
-    if target_count > allowed_target_count:
         return True
     return False
 
@@ -329,12 +318,12 @@ def parse_args():
     parser.add_argument("--min-small-text-training-score", type=float, default=0.5)
     parser.add_argument("--require-model-high-quality-pair", action="store_true")
     parser.add_argument("--min-pair-quality-score", type=float, default=0.0)
-    parser.add_argument("--pair-type-regex", default="main_to_ad|main_to_angle|main_to_lifestyle|angle_to_ad")
+    parser.add_argument("--pair-type-regex", default="main_to_ad|main_to_angle|main_to_lifestyle|main_to_infographic|angle_to_ad")
     parser.add_argument("--reject-complex-targets", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--max-source-product-instance-count", type=float, default=2)
     parser.add_argument("--max-target-product-instance-count", type=float, default=1)
     parser.add_argument("--product-domain-regex", default="")
-    parser.add_argument("--max-transformation", choices=["low", "medium", "high"], default="medium")
+    parser.add_argument("--max-transformation", choices=["low", "medium", "high"], default="high")
     parser.add_argument("--min-identity-confidence", type=float, default=0.85)
     parser.add_argument("--min-training-value-score", type=float, default=0.0)
     parser.add_argument("--min-edit-usefulness-score", type=float, default=0.0)

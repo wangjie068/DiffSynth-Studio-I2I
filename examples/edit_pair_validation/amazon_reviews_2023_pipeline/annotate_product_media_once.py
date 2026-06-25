@@ -36,7 +36,7 @@ Hard rules:
 - Reject/down-score if the target appears to be a different product type, brand, formula, SKU, package, or visible product text, even if colors or category look similar.
 - Humans/faces/hands are OK only when the complete product remains clear and dominant.
 - Preserve brand/logo, front label, package shape, color, cap/pump/tube geometry, and useful small text.
-- Prefer low/medium transformations that improve aesthetics: clean ad layout, polished lifestyle scene, better lighting/background, or controlled angle change.
+- Prefer controlled transformations that improve aesthetics: clean ad layout, polished lifestyle scene, better lighting/background, or controlled angle change. A high transformation is valid only when the same complete product/package remains dominant and identity-safe.
 - Small text means fine label/capacity/ingredient/warning text, dense package copy, small ad callouts, and icon labels. OCR best-effort; use "[unreadable]" instead of inventing text.
 
 Text and description rules:
@@ -854,56 +854,6 @@ def postprocess_annotation(annotation: dict, args) -> tuple[dict, list[dict]]:
         if pair.get("transformation_magnitude") == "high" and not strong_model_pair:
             reasons.append("high_transformation_magnitude")
 
-        warnings = []
-        high_confidence_override = (
-            pair.get("pair_type") in {"main_to_ad", "main_to_angle", "main_to_lifestyle", "angle_to_ad"}
-            and not product_reasons
-            and (not args.require_model_high_quality_pair or pair.get("is_high_quality_pair") is True)
-            and pair_quality >= args.min_pair_quality_score
-            and (not args.require_selected_main_source or pair.get("source_image_index") == selected_source_index)
-            and identity >= args.high_confidence_override_identity
-            and as_float(pair.get("training_value_score")) >= args.high_confidence_override_training_value
-            and as_float(pair.get("edit_usefulness_score")) >= args.high_confidence_override_usefulness
-            and source_quality >= args.min_pair_source_quality_score
-            and logo_score >= args.min_pair_logo_preservation_score
-            and small_text_score >= args.min_pair_small_text_training_score
-            and source_description_chars >= args.min_image_detailed_description_chars
-            and target_description_chars >= args.min_image_detailed_description_chars
-            and source_identity_chars >= args.min_product_identity_description_chars
-            and target_identity_chars >= args.min_product_identity_description_chars
-            and detailed_instruction_chars >= args.min_pair_detailed_instruction_chars
-            and logo_preservation_chars >= args.min_pair_logo_preservation_chars
-            and small_text_preservation_chars >= args.min_pair_small_text_preservation_chars
-            and target_small_text_ocr_chars >= args.min_target_small_text_ocr_chars
-            and (
-                not args.require_target_visible_text_in_instruction
-                or not as_bool(target.get("has_marketing_text"))
-                or target_text_inventory_chars < args.min_target_visible_text_inventory_chars
-                or target_text_instruction_overlap >= args.min_target_text_instruction_overlap
-            )
-            and (not args.reject_target_back_view or not target_is_back_view(target, pair))
-            and not source_complexity_reasons(source, args)
-            and not target_complexity_reasons(source, target, pair, args)
-            and target_same >= args.min_pair_target_same_confidence
-            and target_role not in blocked_roles
-            and not pair_declares_product_mismatch(pair)
-        )
-        if high_confidence_override:
-            overridable = {
-                f"target_candidate_score<{args.min_pair_target_score}",
-                f"target_product_visibility<{args.min_pair_target_visibility}",
-                f"target_quality_score<{args.min_pair_target_quality_score}",
-                f"target_aesthetic_score<{args.min_pair_target_aesthetic_score}",
-                "high_transformation_magnitude",
-            }
-            kept_reasons = []
-            for reason in reasons:
-                if reason in overridable:
-                    warnings.append(f"overrode_{reason}")
-                else:
-                    kept_reasons.append(reason)
-            reasons = kept_reasons
-
         if reasons:
             pair["reject"] = True
             pair["reject_reasons"] = sorted(set(str(reason) for reason in reasons))
@@ -912,8 +862,6 @@ def postprocess_annotation(annotation: dict, args) -> tuple[dict, list[dict]]:
             pair["reject"] = False
             pair["reject_reasons"] = []
             pair["post_filter_rejected"] = False
-            if warnings:
-                pair["post_filter_warnings"] = sorted(set(warnings))
             valid_pairs.append(pair)
         processed_pairs.append(pair)
 
