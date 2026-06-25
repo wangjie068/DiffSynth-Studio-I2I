@@ -422,14 +422,12 @@ def build_content(product_id: str, items: list[dict], raw_product: Optional[dict
         "category": first.get("category", ""),
         "product_page_url": first.get("product_page_url", ""),
         "image_count_sent": len(items),
-        "raw_product_for_prompt": raw_for_prompt(raw_product),
         "images": [
             {
                 "image_index": item["image_index"],
                 "image_id": item.get("image_id", ""),
                 "variant": item.get("variant", ""),
                 "url": item.get("fpath", ""),
-                "source_annotation": item,
             }
             for item in items
         ],
@@ -1023,26 +1021,6 @@ class ProductRawReader:
         while self.current is not None and self.current[0] != product_id:
             self._read_next()
         return self.current[1] if self.current is not None else None
-
-
-def raw_for_prompt(raw_product: Optional[dict]) -> dict:
-    if not raw_product:
-        return {}
-    return {
-        "main_category": raw_product.get("main_category"),
-        "title": raw_product.get("title"),
-        "average_rating": raw_product.get("average_rating"),
-        "rating_number": raw_product.get("rating_number"),
-        "features": raw_product.get("features"),
-        "description": raw_product.get("description"),
-        "price": raw_product.get("price"),
-        "store": raw_product.get("store"),
-        "categories": raw_product.get("categories"),
-        "details": raw_product.get("details"),
-        "parent_asin": raw_product.get("parent_asin"),
-        "subtitle": raw_product.get("subtitle"),
-        "author": raw_product.get("author"),
-    }
 
 
 def parse_args():
