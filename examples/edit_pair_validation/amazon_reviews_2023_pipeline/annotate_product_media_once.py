@@ -584,8 +584,6 @@ def source_complexity_reasons(source: dict, args) -> list[str]:
         reasons.append(f"blocked_source_layout:{layout_type}")
     if layout_complexity == "complex":
         reasons.append("source_layout_complexity:complex")
-    if as_bool(source.get("has_multiple_product_views")):
-        reasons.append("source_has_multiple_product_views")
     if as_bool(source.get("has_color_or_variant_swatches")):
         reasons.append("source_has_color_or_variant_swatches")
     if product_count > args.max_source_product_instance_count:
@@ -991,7 +989,7 @@ def parse_args():
         default=r"nail art|nail sticker|sticker|decal|temporary tattoo|water transfer|pattern sheet|flat decorative sheet|swatch-like design",
     )
     parser.add_argument("--reject-target-back-view", action=argparse.BooleanOptionalAction, default=True)
-    parser.add_argument("--allow-infographic-pairs", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--allow-infographic-pairs", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--allow-multi-product-targets", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--max-source-product-instance-count", type=float, default=2)
     parser.add_argument("--max-target-product-instance-count", type=float, default=1)
@@ -1000,7 +998,7 @@ def parse_args():
     parser.add_argument("--min-pair-detailed-instruction-chars", type=int, default=0)
     parser.add_argument("--min-pair-logo-preservation-chars", type=int, default=0)
     parser.add_argument("--min-pair-small-text-preservation-chars", type=int, default=0)
-    parser.add_argument("--require-target-visible-text-in-instruction", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--require-target-visible-text-in-instruction", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--min-target-visible-text-inventory-chars", type=int, default=20)
     parser.add_argument("--min-target-text-instruction-overlap", type=float, default=0.65)
     parser.add_argument(
