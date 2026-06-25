@@ -26,11 +26,11 @@ Goal: select high-quality source-target product image pairs for training. Keep o
 
 Hard rules:
 - You receive N numbered images. Return exactly one "images" item for every input image_index. Do not omit bad images; mark them exclude.
-- Select the best clean source image yourself; Amazon MAIN is only a hint. Prefer a simple product-only/catalog image with the front logo/label readable as source. Images with fruit, flowers, ingredient props, lifestyle background, marketing layout, or richer styling are usually targets, not sources.
+- Select the best clean source image yourself; Amazon MAIN is only a hint. Prefer a simple single-unit product-only/catalog image with the front logo/label readable as source. If both a single product package and a multi-pack/bundle/group shot exist, choose the single product package as source. Images with fruit, flowers, ingredient props, lifestyle background, marketing layout, or richer styling are usually targets, not sources.
 - If two images show the same product where one is clean/product-only and the other is styled/prop/ad/lifestyle, output the pair in clean-to-styled direction, not the reverse.
 - Select every high-value training pair from the chosen source, usually 1-4 if available. Do not chase coverage; skip borderline, redundant, or merely acceptable pairs.
 - The "pairs" array should contain only plausible training candidates. Do not add rejected pairs just to explain failures; describe bad targets in their image fields instead.
-- A valid target must contain the same complete saleable product/package as the source.
+- A valid target must contain the same complete saleable product/package as the source, as a real visible product object rather than only printed packaging artwork or label text.
 - If the source shows multiple major saleable objects, for example box + bottle, box + tube, jar + outer box, or palette + shade swatches, the target must preserve those same major objects. Do not accept targets that drop the box/package, drop the bottle/jar/tube, or keep only one component.
 - Do not accept package-form substitutions: box-to-bottle, bottle-to-box, jar-to-label, product-to-front-panel, or targets where the product only appears as a printed picture on retail packaging.
 - Reject/down-score target images where the product is missing, tiny, incidental, cropped, back/rear view, a pure size chart/manual/ingredient panel, feature table, text-only infographic, swatch board, before-after-only panel, or complex multi-panel/product-grid collage.
@@ -494,69 +494,6 @@ def flatten_text_values(value) -> list[str]:
     return [str(value)]
 
 
-def image_visible_text_inventory(image: dict) -> str:
-    parts = []
-    for key in [
-        "visible_text",
-        "visible_text_inventory",
-        "logo_or_brand_transcription",
-        "small_text_transcription",
-        "small_text_ocr_text",
-    ]:
-        parts.extend(flatten_text_values(image.get(key)))
-    for span in image.get("small_text_ocr_spans") or []:
-        if isinstance(span, dict):
-            parts.extend(flatten_text_values(span.get("text")))
-    return " ".join(part for part in parts if part and part != "[unreadable]")
-
-
-def text_tokens(value: str) -> set[str]:
-    stopwords = {
-        "and", "the", "with", "for", "from", "into", "same", "keep", "text",
-        "product", "bottle", "image", "target", "source", "visible", "label",
-    }
-    tokens = set()
-    for token in re.findall(r"[a-z0-9][a-z0-9'-]{2,}", str(value).lower()):
-        token = token.strip("'-")
-        if token and token not in stopwords:
-            tokens.add(token)
-    return tokens
-
-
-def text_inventory_overlap(inventory: str, instruction: str) -> float:
-    inventory_tokens = text_tokens(inventory)
-    if not inventory_tokens:
-        return 1.0
-    instruction_tokens = text_tokens(instruction)
-    if not instruction_tokens:
-        return 0.0
-    required = min(len(inventory_tokens), 16)
-    matched = len(inventory_tokens & instruction_tokens)
-    return min(matched, required) / required
-
-
-def product_identity_tokens(image: dict) -> set[str]:
-    text = " ".join([
-        image_visible_text_inventory(image),
-        str(image.get("product_identity_description") or ""),
-    ])
-    generic = {
-        "beauty", "skin", "care", "cream", "serum", "organic", "natural",
-        "professional", "advanced", "product", "package", "front", "label",
-        "oz", "fl", "ml", "net", "weight",
-    }
-    return {token for token in text_tokens(text) if token not in generic}
-
-
-def product_text_match_score(source: dict, target: dict) -> float:
-    source_tokens = product_identity_tokens(source)
-    target_tokens = product_identity_tokens(target)
-    if len(source_tokens) < 4 or len(target_tokens) < 4:
-        return 1.0
-    overlap = len(source_tokens & target_tokens)
-    return overlap / min(len(source_tokens), len(target_tokens))
-
-
 def selected_main_source_index(annotation: dict):
     selection = annotation.get("source_selection") or {}
     selected = selection.get("selected_main_source_image_index")
@@ -656,17 +593,20 @@ def pair_declares_missing_source_component(pair: dict) -> bool:
         pair.get("pair_quality_judgement"),
         pair.get("pair_failure_modes"),
         pair.get("product_text_match_notes"),
+        pair.get("edit_instruction"),
+        pair.get("edit_instruction_detailed"),
     ]))
     if re.search(r"\b(keep|preserv(e|ing)|contains?|includes?)\b.{0,40}\b(box|package|packaging|bottle|jar|tube)\b", text, re.I):
         return False
     return bool(re.search(
-        r"\b(package absent|box absent|missing (the )?(box|package|packaging|bottle|jar|tube)|"
+        r"\b((package|box|bottle|jar|tube) (is )?absent|missing (the )?(box|package|packaging|bottle|jar|tube)|"
         r"drops? (the )?(box|package|packaging|bottle|jar|tube)|"
         r"target drops? (the )?(box|package|packaging|bottle|jar|tube)|"
         r"bar[- ]only|bottle[- ]only|jar[- ]only|label[- ]only|front[- ]panel|"
         r"less direct identity match|package form|packaging transformation|"
-        r"box[- ]to[- ]bottle|bottle[- ]to[- ]box|jar[- ]to[- ]label|"
-        r"retail[- ]box (ad|target|front pack)|front pack target|printed (picture|image) on (the )?(box|package))\b",
+        r"box[- ]to[- ]bottle|bottle[- ]to[- ]box|bottle .{0,30} into (a )?(box|boxed|retail pack)|"
+        r"jar[- ]to[- ]label|retail[- ]box (ad|target|front pack)|boxed retail|retail pack|front pack target|"
+        r"printed (picture|image|artwork) on (the )?(box|package))\b",
         text,
         re.I,
     ))
@@ -716,14 +656,14 @@ def target_complexity_reasons(source: dict, target: dict, pair: dict, args) -> l
     )
     if not args.allow_infographic_pairs and pair_type == "main_to_infographic":
         reasons.append("blocked_pair_type:main_to_infographic")
-    if layout_type in {"multi_panel", "collage"}:
+    if layout_type == "collage":
         reasons.append(f"blocked_target_layout:{layout_type}")
     if as_bool(target.get("has_multiple_product_views")):
         reasons.append("target_has_multiple_product_views")
     if as_bool(target.get("has_color_or_variant_swatches")):
         reasons.append("target_has_color_or_variant_swatches")
     if re.search(
-        r"\b(multi[- ]?panel|collage|multiple views?|multi[- ]?view|variant comparison|color comparison|"
+        r"\b(collage|multiple views?|multi[- ]?view|variant comparison|color comparison|"
         r"swatches?|swatch board|shade chart|color chart|product grid|grid of|several product views|"
         r"multiple copies|duplicated bottles|comparison chart)\b",
         descriptive_text,
@@ -732,7 +672,7 @@ def target_complexity_reasons(source: dict, target: dict, pair: dict, args) -> l
         reasons.append("target_complex_collage_or_variant_layout")
     if re.search(
         r"\b(text[- ]only infographic|feature table|specification table|ingredient panel|size chart|"
-        r"instruction manual|label[- ]only|front[- ]panel|packaging panel|no physical product|"
+        r"instruction manual|label[- ]only|no physical product|"
         r"product only appears as (a )?printed (picture|image))\b",
         descriptive_text,
         re.I,
@@ -799,17 +739,6 @@ def postprocess_annotation(annotation: dict, args) -> tuple[dict, list[dict]]:
         small_text_preservation_chars = text_len(pair.get("small_text_preservation"))
         source_small_text_ocr_chars = small_text_ocr_len(source)
         target_small_text_ocr_chars = small_text_ocr_len(target)
-        target_text_inventory = image_visible_text_inventory(target)
-        target_text_inventory_chars = text_len(target_text_inventory)
-        instruction_text = " ".join(flatten_text_values(pair.get("edit_instruction_detailed")))
-        target_text_instruction_overlap = text_inventory_overlap(target_text_inventory, instruction_text)
-        heuristic_product_text_match = product_text_match_score(source, target)
-        model_product_text_match = pair.get("product_text_match_score")
-        product_text_match = (
-            heuristic_product_text_match
-            if model_product_text_match is None
-            else min(as_float(model_product_text_match, 1.0), heuristic_product_text_match)
-        )
         strong_model_pair = (
             pair_type in {"main_to_ad", "main_to_angle", "main_to_lifestyle", "angle_to_ad", "main_to_infographic"}
             and pair.get("is_high_quality_pair") is True
@@ -873,13 +802,6 @@ def postprocess_annotation(annotation: dict, args) -> tuple[dict, list[dict]]:
             reasons.append(f"small_text_preservation_chars<{args.min_pair_small_text_preservation_chars}")
         if target_small_text_ocr_chars < args.min_target_small_text_ocr_chars:
             reasons.append(f"target_small_text_ocr_chars<{args.min_target_small_text_ocr_chars}")
-        if (
-            args.require_target_visible_text_in_instruction
-            and as_bool(target.get("has_marketing_text"))
-            and target_text_inventory_chars >= args.min_target_visible_text_inventory_chars
-            and target_text_instruction_overlap < args.min_target_text_instruction_overlap
-        ):
-            reasons.append(f"target_visible_text_instruction_overlap<{args.min_target_text_instruction_overlap}")
         reasons.extend(source_complexity_reasons(source, args))
         if args.reject_target_back_view and target_is_back_view(target, pair):
             reasons.append("target_back_or_rear_view_not_allowed")
@@ -889,8 +811,6 @@ def postprocess_annotation(annotation: dict, args) -> tuple[dict, list[dict]]:
             reasons.append("model_declared_different_sku_or_product")
         if pair_declares_missing_source_component(pair):
             reasons.append("model_declared_missing_source_component")
-        if product_text_match < 0.35:
-            reasons.append("source_target_product_text_mismatch")
         reasons.extend(target_complexity_reasons(source, target, pair, args))
         if target_role in blocked_roles:
             reasons.append(f"blocked_target_role:{target_role}")
