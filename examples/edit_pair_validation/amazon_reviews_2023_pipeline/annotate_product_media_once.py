@@ -241,7 +241,10 @@ class CurlAzureChatClient:
             payload_path = payload_file.name
             config_path = config_file.name
         try:
-            result = subprocess.run(["curl", "--config", config_path], check=True, capture_output=True, text=True)
+            result = subprocess.run(["curl", "--config", config_path], capture_output=True, text=True)
+            if result.returncode != 0:
+                detail = (result.stderr or result.stdout or "").strip()
+                raise RuntimeError(f"curl failed with exit {result.returncode}: {detail}")
         finally:
             for path in [payload_path, config_path]:
                 try:
@@ -372,10 +375,11 @@ def build_content(product_id: str, items: list[dict], raw_product: Optional[dict
     return content, metadata
 
 
-def annotate_one_product(task: dict, args, api_key: Optional[str]):
+def annotate_one_product(task: dict, args, api_keys: list[str]):
     product_id = task["product_id"]
     selected = task["selected"]
     raw_product = task.get("raw_product")
+    start_key_index = task.get("start_key_index", 0)
     content, metadata = build_content(product_id, selected, raw_product)
     if args.dry_run:
         return {
@@ -386,26 +390,38 @@ def annotate_one_product(task: dict, args, api_key: Optional[str]):
             "source_images": selected,
         }
 
-    client = build_client(args.base_url, args.api_version, api_key)
     last_error = None
+    attempt_errors = []
+    key_count = max(1, len(api_keys))
     for attempt in range(args.retries):
-        try:
-            response_text = client.create(args.model, content)
-            raw_annotation = parse_json_response(response_text)
-            annotation, valid_pairs = postprocess_annotation(raw_annotation, args)
-            return {
-                "product_id": product_id,
-                "source_dataset": "McAuley-Lab/Amazon-Reviews-2023",
-                "raw_product": raw_product,
-                "metadata": metadata,
-                "source_images": selected,
-                "raw_annotation": raw_annotation,
-                "annotation": annotation,
-                "valid_pairs": valid_pairs,
-            }
-        except Exception as error:
-            last_error = error
-            time.sleep(2 ** attempt)
+        for key_offset in range(key_count):
+            key_index = (start_key_index + key_offset) % key_count
+            api_key = api_keys[key_index] if api_keys else None
+            client = build_client(args.base_url, args.api_version, api_key)
+            try:
+                response_text = client.create(args.model, content)
+                raw_annotation = parse_json_response(response_text)
+                annotation, valid_pairs = postprocess_annotation(raw_annotation, args)
+                return {
+                    "product_id": product_id,
+                    "source_dataset": "McAuley-Lab/Amazon-Reviews-2023",
+                    "raw_product": raw_product,
+                    "metadata": metadata,
+                    "source_images": selected,
+                    "raw_annotation": raw_annotation,
+                    "annotation": annotation,
+                    "valid_pairs": valid_pairs,
+                    "api_key_index": key_index,
+                    "retry_attempt": attempt,
+                }
+            except Exception as error:
+                last_error = error
+                attempt_errors.append({
+                    "attempt": attempt,
+                    "api_key_index": key_index,
+                    "error": str(error),
+                })
+        time.sleep(2 ** attempt)
     return {
         "product_id": product_id,
         "source_dataset": "McAuley-Lab/Amazon-Reviews-2023",
@@ -413,6 +429,7 @@ def annotate_one_product(task: dict, args, api_key: Optional[str]):
         "metadata": metadata,
         "source_images": selected,
         "error": str(last_error),
+        "attempt_errors": attempt_errors,
     }
 
 
@@ -1082,13 +1099,13 @@ def main():
                         item["image_index"] = index
 
                 raw_product = product_raw_reader.get(product_id)
-                api_key = api_keys[submitted % len(api_keys)] if api_keys else None
                 task = {
                     "product_id": product_id,
                     "selected": selected,
                     "raw_product": raw_product,
+                    "start_key_index": submitted % len(api_keys) if api_keys else 0,
                 }
-                futures.add(executor.submit(annotate_one_product, task, args, api_key))
+                futures.add(executor.submit(annotate_one_product, task, args, api_keys))
                 submitted += 1
                 if submitted >= args.max_products:
                     break
