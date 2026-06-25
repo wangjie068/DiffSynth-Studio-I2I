@@ -26,10 +26,13 @@ Goal: select high-quality source-target product image pairs for training. Keep o
 
 Hard rules:
 - You receive N numbered images. Return exactly one "images" item for every input image_index. Do not omit bad images; mark them exclude.
-- Select the best clean source image yourself; Amazon MAIN is only a hint.
-- Select only genuinely useful pairs. Do not output all combinations.
+- Select the best clean source image yourself; Amazon MAIN is only a hint. Prefer a simple product-only/catalog image with the front logo/label readable as source. Images with fruit, flowers, ingredient props, lifestyle background, marketing layout, or richer styling are usually targets, not sources.
+- If two images show the same product where one is clean/product-only and the other is styled/prop/ad/lifestyle, output the pair in clean-to-styled direction, not the reverse.
+- Select all genuinely useful pairs from the chosen source. Do not stop after the single best target, but also do not output low-quality all combinations.
 - A valid target must contain the same complete saleable product/package as the source.
 - Reject/down-score target images where the product is missing, tiny, incidental, cropped, back/rear view, a pure size chart/manual/ingredient panel, a swatch board, a before-after-only panel, or a complex multi-panel/product-grid collage.
+- Reject/down-score side/back/rear packaging views with dense side-panel text when the source is a front package view.
+- Reject/down-score if the target appears to be a different product type, brand, formula, SKU, package, or visible product text, even if colors or category look similar.
 - Humans/faces/hands are OK only when the complete product remains clear and dominant.
 - Preserve brand/logo, front label, package shape, color, cap/pump/tube geometry, and useful small text.
 - Prefer low/medium transformations that improve aesthetics: clean ad layout, polished lifestyle scene, better lighting/background, or controlled angle change.
@@ -163,6 +166,8 @@ Return this compact JSON shape:
       "background_change": "none/white_to_graphic/white_to_lifestyle/studio_to_lifestyle/other",
       "small_text_change": "preserve_same_text/reposition_text/resize_text/add_marketing_small_text/remove_or_obscure_text/no_small_text/uncertain",
       "small_text_training_value_score": 0.0,
+      "product_text_match_score": 0.0,
+      "product_text_match_notes": "brief comparison of source and target brand/product/formula/package text",
       "logo_preservation": "exact logo/brand requirements",
       "small_text_preservation": "exact label/text-zone requirements",
       "small_text_generation": "new text/callouts if any",
@@ -525,6 +530,28 @@ def text_inventory_overlap(inventory: str, instruction: str) -> float:
     return min(matched, required) / required
 
 
+def product_identity_tokens(image: dict) -> set[str]:
+    text = " ".join([
+        image_visible_text_inventory(image),
+        str(image.get("product_identity_description") or ""),
+    ])
+    generic = {
+        "beauty", "skin", "care", "cream", "serum", "organic", "natural",
+        "professional", "advanced", "product", "package", "front", "label",
+        "oz", "fl", "ml", "net", "weight",
+    }
+    return {token for token in text_tokens(text) if token not in generic}
+
+
+def product_text_match_score(source: dict, target: dict) -> float:
+    source_tokens = product_identity_tokens(source)
+    target_tokens = product_identity_tokens(target)
+    if len(source_tokens) < 4 or len(target_tokens) < 4:
+        return 1.0
+    overlap = len(source_tokens & target_tokens)
+    return overlap / min(len(source_tokens), len(target_tokens))
+
+
 def selected_main_source_index(annotation: dict):
     selection = annotation.get("source_selection") or {}
     selected = selection.get("selected_main_source_image_index")
@@ -590,6 +617,16 @@ def target_is_back_view(target: dict, pair: dict) -> bool:
         descriptive_text,
         re.I,
     ))
+
+
+def target_is_side_text_view(source: dict, target: dict, pair: dict) -> bool:
+    source_view = str(source.get("product_view") or "").lower()
+    target_view = str(target.get("product_view") or "").lower()
+    pair_view = str(pair.get("view_change") or "").lower()
+    target_text_density = str(target.get("text_density") or "").lower()
+    source_is_front = source_view in {"front", "angled_front", "unknown", ""}
+    target_is_side = target_view == "side" or pair_view == "front_to_side"
+    return source_is_front and target_is_side and target_text_density in {"medium", "high"}
 
 
 def source_complexity_reasons(source: dict, args) -> list[str]:
@@ -722,6 +759,13 @@ def postprocess_annotation(annotation: dict, args) -> tuple[dict, list[dict]]:
         target_text_inventory_chars = text_len(target_text_inventory)
         instruction_text = " ".join(flatten_text_values(pair.get("edit_instruction_detailed")))
         target_text_instruction_overlap = text_inventory_overlap(target_text_inventory, instruction_text)
+        heuristic_product_text_match = product_text_match_score(source, target)
+        model_product_text_match = pair.get("product_text_match_score")
+        product_text_match = (
+            heuristic_product_text_match
+            if model_product_text_match is None
+            else min(as_float(model_product_text_match, 1.0), heuristic_product_text_match)
+        )
 
         if pair_type not in allowed_pair_types:
             reasons.append(f"unknown_pair_type:{pair_type}")
@@ -783,6 +827,10 @@ def postprocess_annotation(annotation: dict, args) -> tuple[dict, list[dict]]:
         reasons.extend(source_complexity_reasons(source, args))
         if args.reject_target_back_view and target_is_back_view(target, pair):
             reasons.append("target_back_or_rear_view_not_allowed")
+        if target_is_side_text_view(source, target, pair):
+            reasons.append("target_side_text_panel_not_allowed")
+        if product_text_match < 0.25:
+            reasons.append("source_target_product_text_mismatch")
         reasons.extend(target_complexity_reasons(source, target, pair, args))
         if target_role in blocked_roles:
             reasons.append(f"blocked_target_role:{target_role}")
