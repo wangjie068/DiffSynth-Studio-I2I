@@ -28,9 +28,10 @@ Hard rules:
 - You receive N numbered images. Return exactly one "images" item for every input image_index. Do not omit bad images; mark them exclude.
 - Select the best clean source image yourself; Amazon MAIN is only a hint. Prefer a simple product-only/catalog image with the front logo/label readable as source. Images with fruit, flowers, ingredient props, lifestyle background, marketing layout, or richer styling are usually targets, not sources.
 - If two images show the same product where one is clean/product-only and the other is styled/prop/ad/lifestyle, output the pair in clean-to-styled direction, not the reverse.
-- Select only high-value training pairs from the chosen source. Do not chase coverage; skip borderline, redundant, or merely acceptable pairs.
+- Select every high-value training pair from the chosen source, usually 1-4 if available. Do not chase coverage; skip borderline, redundant, or merely acceptable pairs.
+- The "pairs" array should contain only plausible training candidates. Do not add rejected pairs just to explain failures; describe bad targets in their image fields instead.
 - A valid target must contain the same complete saleable product/package as the source.
-- Reject/down-score target images where the product is missing, tiny, incidental, cropped, back/rear view, a pure size chart/manual/ingredient panel, a swatch board, a before-after-only panel, or a complex multi-panel/product-grid collage.
+- Reject/down-score target images where the product is missing, tiny, incidental, cropped, back/rear view, a pure size chart/manual/ingredient panel, feature table, text-only infographic, swatch board, before-after-only panel, or complex multi-panel/product-grid collage.
 - Reject/down-score side/back/rear packaging views with dense side-panel text when the source is a front package view.
 - Reject/down-score if the target appears to be a different product type, brand, formula, SKU, package, or visible product text, even if colors or category look similar.
 - Humans/faces/hands are OK only when the complete product remains clear and dominant.
@@ -665,7 +666,6 @@ def target_complexity_reasons(source: dict, target: dict, pair: dict, args) -> l
     reasons = []
     layout_type = str(target.get("layout_type") or "").lower()
     layout_complexity = str(target.get("layout_complexity") or "").lower()
-    edit_scope = str(pair.get("edit_scope_complexity") or "").lower()
     pair_type = str(pair.get("pair_type") or "").lower()
     descriptive_text = " ".join(
         str(value or "")
@@ -684,8 +684,6 @@ def target_complexity_reasons(source: dict, target: dict, pair: dict, args) -> l
         reasons.append(f"blocked_target_layout:{layout_type}")
     if layout_complexity == "complex":
         reasons.append("target_layout_complexity:complex")
-    if edit_scope == "complex":
-        reasons.append("edit_scope_complexity:complex")
     if as_bool(target.get("has_multiple_product_views")):
         reasons.append("target_has_multiple_product_views")
     if as_bool(target.get("has_color_or_variant_swatches")):
