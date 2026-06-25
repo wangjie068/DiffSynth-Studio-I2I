@@ -26,13 +26,14 @@ Goal: select high-quality source-target product image pairs for training. Keep o
 
 Hard rules:
 - You receive N numbered images. Return exactly one "images" item for every input image_index. Do not omit bad images; mark them exclude.
-- Select the best clean source image yourself; Amazon MAIN is only a hint. Prefer a simple single-unit product-only/catalog image with the front logo/label readable as source. If both a single product package and a multi-pack/bundle/group shot exist, choose the single product package as source. Images with fruit, flowers, ingredient props, lifestyle background, marketing layout, or richer styling are usually targets, not sources.
+- Select the best clean source image yourself; Amazon MAIN is only a hint. Prefer a simple single-unit product-only/catalog image with the front logo/label readable as source. If both a single product package and a multi-pack/bundle/group shot exist, choose the single product package as source. Do not choose a source whose brand/product identity is mostly unreadable unless no usable product-label source exists. Images with fruit, flowers, ingredient props, lifestyle background, marketing layout, or richer styling are usually targets, not sources.
 - If two images show the same product where one is clean/product-only and the other is styled/prop/ad/lifestyle, output the pair in clean-to-styled direction, not the reverse.
-- Select every high-value training pair from the chosen source, usually 1-4 if available. Do not chase coverage; skip borderline, redundant, or merely acceptable pairs.
+- Select every high-value training pair from the chosen source, usually 1-6 if available. Do not chase coverage; skip borderline, redundant, or merely acceptable pairs.
 - The "pairs" array should contain only plausible training candidates. Do not add rejected pairs just to explain failures; describe bad targets in their image fields instead.
 - A valid target must contain the same complete saleable product/package as the source, as a real visible product object rather than only printed packaging artwork or label text.
 - If the source shows multiple major saleable objects, for example box + bottle, box + tube, jar + outer box, or palette + shade swatches, the target must preserve those same major objects. Do not accept targets that drop the box/package, drop the bottle/jar/tube, or keep only one component.
-- Do not accept package-form substitutions: box-to-bottle, bottle-to-box, jar-to-label, product-to-front-panel, or targets where the product only appears as a printed picture on retail packaging.
+- Do not accept package-form substitutions or additions: box-to-bottle, bottle-to-box, jar-to-label, product-to-front-panel, adding an outer retail box that was not in the source, or targets where the product only appears as a printed picture on retail packaging.
+- Reject/down-score if source and target readable product-type words conflict, such as spray vs shampoo, bottle vs retail box, lotion vs soap, or serum vs shampoo.
 - Reject/down-score target images where the product is missing, tiny, incidental, cropped, back/rear view, a pure size chart/manual/ingredient panel, feature table, text-only infographic, swatch board, before-after-only panel, or complex multi-panel/product-grid collage.
 - Reject/down-score clean sources that include external color swatches, shade strips, smear samples, or variant comparison samples outside the product itself.
 - Do not reject a polished ad/lifestyle target only because its layout is visually rich or text-heavy, as long as the exact same complete product/package remains dominant and readable.
@@ -568,7 +569,20 @@ def target_is_side_text_view(source: dict, target: dict, pair: dict) -> bool:
     target_text_density = str(target.get("text_density") or "").lower()
     source_is_front = source_view in {"front", "angled_front", "unknown", ""}
     target_is_side = target_view == "side" or pair_view == "front_to_side"
-    return source_is_front and target_is_side and target_text_density in {"medium", "high"}
+    descriptive_text = " ".join(
+        str(value or "")
+        for value in [
+            target.get("detailed_description"),
+            target.get("product_identity_description"),
+            target.get("target_edit_description"),
+            pair.get("pair_quality_judgement"),
+            pair.get("pair_failure_modes"),
+        ]
+    )
+    return source_is_front and (
+        (target_is_side and target_text_density in {"medium", "high"})
+        or re.search(r"\b(side text|side panel|side copy|side label|dense side|side becomes more visible)\b", descriptive_text, re.I)
+    )
 
 
 def pair_declares_product_mismatch(pair: dict) -> bool:
@@ -593,6 +607,8 @@ def pair_declares_missing_source_component(pair: dict) -> bool:
         pair.get("pair_quality_judgement"),
         pair.get("pair_failure_modes"),
         pair.get("product_text_match_notes"),
+    ]))
+    instruction_text = " ".join(flatten_text_values([
         pair.get("edit_instruction"),
         pair.get("edit_instruction_detailed"),
     ]))
@@ -604,12 +620,116 @@ def pair_declares_missing_source_component(pair: dict) -> bool:
         r"target drops? (the )?(box|package|packaging|bottle|jar|tube)|"
         r"bar[- ]only|bottle[- ]only|jar[- ]only|label[- ]only|front[- ]panel|"
         r"less direct identity match|package form|packaging transformation|"
-        r"box[- ]to[- ]bottle|bottle[- ]to[- ]box|bottle .{0,30} into (a )?(box|boxed|retail pack)|"
-        r"jar[- ]to[- ]label|retail[- ]box (ad|target|front pack)|boxed retail|retail pack|front pack target|"
+        r"box[- ]to[- ]bottle|bottle[- ]to[- ]box|jar[- ]to[- ]label|"
+        r"retail[- ]box (ad|target|front pack)|front pack target|"
         r"printed (picture|image|artwork) on (the )?(box|package))\b",
         text,
         re.I,
+    ) or re.search(
+        r"\b(bottle .{0,30} into (a )?(box|boxed|retail pack)|boxed retail|retail pack|"
+        r"matching box|adds? (a )?(box|outer box|retail box|package)|"
+        r"plus (a )?(matching )?(box|outer box|retail box|package))\b",
+        instruction_text,
+        re.I,
     ))
+
+
+def image_identity_text(image: dict) -> str:
+    parts = []
+    for key in [
+        "visible_text",
+        "visible_text_inventory",
+        "logo_or_brand_transcription",
+        "small_text_transcription",
+        "small_text_ocr_text",
+        "product_identity_description",
+        "detailed_description",
+    ]:
+        parts.extend(flatten_text_values(image.get(key)))
+    for span in image.get("small_text_ocr_spans") or []:
+        if isinstance(span, dict):
+            parts.extend(flatten_text_values(span.get("text")))
+    return " ".join(part for part in parts if part and part != "[unreadable]")
+
+
+def image_visible_identity_text(image: dict) -> str:
+    parts = []
+    for key in [
+        "visible_text",
+        "visible_text_inventory",
+        "logo_or_brand_transcription",
+        "small_text_transcription",
+        "small_text_ocr_text",
+    ]:
+        parts.extend(flatten_text_values(image.get(key)))
+    for span in image.get("small_text_ocr_spans") or []:
+        if isinstance(span, dict):
+            parts.extend(flatten_text_values(span.get("text")))
+    return " ".join(part for part in parts if part and part != "[unreadable]")
+
+
+def product_kind_terms(text: str) -> set[str]:
+    lowered = f" {str(text).lower()} "
+    patterns = {
+        "shampoo": r"\bshampoo\b",
+        "conditioner": r"\bconditioner\b",
+        "spray": r"\b(spray|mist)\b",
+        "serum": r"\bserum\b",
+        "cream": r"\bcream\b",
+        "lotion": r"\blotion\b",
+        "soap": r"\b(soap|beauty bar)\b",
+        "scrub": r"\bscrub\b",
+        "mask": r"\bmask\b",
+        "balm": r"\bbalm\b",
+        "deodorant": r"\bdeodorant\b",
+        "perfume": r"\b(perfume|cologne|fragrance)\b",
+        "oil": r"\boil\b",
+    }
+    return {kind for kind, pattern in patterns.items() if re.search(pattern, lowered)}
+
+
+def source_identity_reasons(source: dict) -> list[str]:
+    text = image_visible_identity_text(source)
+    logo_legibility = str(source.get("logo_or_brand_legibility") or "").lower()
+    small_text_legibility = str(source.get("small_text_legibility") or "").lower()
+    has_readable_logo = logo_legibility in {"partial", "readable"}
+    has_readable_small_text = small_text_legibility in {"partial", "readable"}
+    if len(re.sub(r"\W+", "", text)) < 8 and not has_readable_logo and not has_readable_small_text:
+        return ["source_identity_text_too_weak"]
+    return []
+
+
+def source_target_kind_conflict(source: dict, target: dict) -> bool:
+    source_terms = product_kind_terms(image_identity_text(source))
+    target_terms = product_kind_terms(image_identity_text(target))
+    if not source_terms or not target_terms:
+        return False
+    compatible = [
+        {"oil", "lotion"},
+        {"cream", "lotion"},
+        {"serum", "oil"},
+    ]
+    if source_terms & target_terms:
+        return False
+    return not any(source_terms <= group and target_terms <= group for group in compatible)
+
+
+def target_introduces_outer_packaging(source: dict, target: dict, pair: dict) -> bool:
+    source_text = image_identity_text(source)
+    target_text = " ".join([
+        image_identity_text(target),
+        " ".join(flatten_text_values(pair.get("pair_quality_judgement"))),
+        " ".join(flatten_text_values(pair.get("edit_instruction"))),
+        " ".join(flatten_text_values(pair.get("edit_instruction_detailed"))),
+    ])
+    source_has_box = re.search(r"\b(box|boxed|retail pack|outer package|outer box|carton)\b", source_text, re.I)
+    target_has_added_box = re.search(
+        r"\b(matching box|outer box|retail box|boxed retail|retail pack|"
+        r"plus (a )?(matching )?(box|package)|adds? (a )?(box|package)|with (a )?(matching )?box)\b",
+        target_text,
+        re.I,
+    )
+    return bool(target_has_added_box and not source_has_box)
 
 
 def source_complexity_reasons(source: dict, args) -> list[str]:
@@ -750,6 +870,8 @@ def postprocess_annotation(annotation: dict, args) -> tuple[dict, list[dict]]:
             and not product_reasons
             and not pair_declares_product_mismatch(pair)
             and not pair_declares_missing_source_component(pair)
+            and not source_target_kind_conflict(source, target)
+            and not target_introduces_outer_packaging(source, target, pair)
         )
 
         if pair_type not in allowed_pair_types:
@@ -803,6 +925,7 @@ def postprocess_annotation(annotation: dict, args) -> tuple[dict, list[dict]]:
         if target_small_text_ocr_chars < args.min_target_small_text_ocr_chars:
             reasons.append(f"target_small_text_ocr_chars<{args.min_target_small_text_ocr_chars}")
         reasons.extend(source_complexity_reasons(source, args))
+        reasons.extend(source_identity_reasons(source))
         if args.reject_target_back_view and target_is_back_view(target, pair):
             reasons.append("target_back_or_rear_view_not_allowed")
         if target_is_side_text_view(source, target, pair):
@@ -811,6 +934,10 @@ def postprocess_annotation(annotation: dict, args) -> tuple[dict, list[dict]]:
             reasons.append("model_declared_different_sku_or_product")
         if pair_declares_missing_source_component(pair):
             reasons.append("model_declared_missing_source_component")
+        if source_target_kind_conflict(source, target):
+            reasons.append("source_target_product_kind_conflict")
+        if target_introduces_outer_packaging(source, target, pair):
+            reasons.append("target_introduces_outer_packaging_not_in_source")
         reasons.extend(target_complexity_reasons(source, target, pair, args))
         if target_role in blocked_roles:
             reasons.append(f"blocked_target_role:{target_role}")
@@ -980,7 +1107,11 @@ def parse_args():
     parser.add_argument("--min-product-logo-text-suitability-score", type=float, default=0.0)
     parser.add_argument(
         "--blocked-product-regex",
-        default=r"nail art|nail sticker|sticker|decal|temporary tattoo|water transfer|pattern sheet|flat decorative sheet|swatch-like design",
+        default=(
+            r"nail art|nail sticker|sticker|decal|temporary tattoo|water transfer|"
+            r"pattern sheet|flat decorative sheet|swatch-like design|toiletry bag|"
+            r"makeup bag|cosmetic bag|jewelry compartment|organizer|holder|case"
+        ),
     )
     parser.add_argument("--reject-target-back-view", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--allow-infographic-pairs", action=argparse.BooleanOptionalAction, default=True)

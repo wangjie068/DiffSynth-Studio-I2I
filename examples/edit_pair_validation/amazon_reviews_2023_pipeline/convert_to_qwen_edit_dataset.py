@@ -163,6 +163,11 @@ def is_complex_target(record: dict, args) -> bool:
     ))
 
 
+def blocked_product_for_training(product: dict) -> bool:
+    text = " ".join(str(product.get(key) or "") for key in ["product_type", "form_factor", "notes"])
+    return bool(re.search(r"\b(toiletry bag|makeup bag|cosmetic bag|jewelry compartment|organizer|holder|case)\b", text, re.I))
+
+
 def keep_pair(record, args):
     product = record.get("product") or {}
     pair = record.get("pair") or {}
@@ -170,6 +175,8 @@ def keep_pair(record, args):
     target_label = record.get("target_image_label") or {}
     prompt = record.get("edit_instruction_detailed") or record.get("edit_instruction")
     if pair.get("reject"):
+        return False
+    if blocked_product_for_training(product):
         return False
     if record.get("post_filter_warnings") and not args.include_warning_pairs:
         return False
