@@ -142,8 +142,8 @@ def is_complex_target(record: dict, args) -> bool:
         if str(target_label.get("layout_type") or "").lower() == "multi_panel":
             return bool(re.search(
                 r"\b(collage|multiple views?|multi[- ]?view|variant comparison|color comparison|"
-                r"swatches?|swatch board|shade chart|color chart|product grid|grid of|several product views|"
-                r"multiple copies|duplicated bottles|comparison chart)\b",
+                r"swatches?|swatch board|shade chart|color chart|product grid|several product views|"
+                r"comparison chart)\b",
                 descriptive_text,
                 re.I,
             ))
@@ -154,8 +154,8 @@ def is_complex_target(record: dict, args) -> bool:
         return True
     return bool(re.search(
         r"\b(collage|multiple views?|multi[- ]?view|variant comparison|color comparison|"
-        r"swatches?|swatch board|shade chart|color chart|product grid|grid of|several product views|"
-        r"multiple copies|duplicated bottles|comparison chart|text[- ]only infographic|feature table|"
+        r"swatches?|swatch board|shade chart|color chart|product grid|several product views|"
+        r"comparison chart|text[- ]only infographic|feature table|"
         r"specification table|ingredient panel|size chart|instruction manual|label[- ]only|"
         r"no physical product|product only appears as (a )?printed (picture|image))\b",
         descriptive_text,
