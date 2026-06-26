@@ -32,17 +32,20 @@ Hard rules:
 - The "pairs" array should contain only plausible training candidates. Do not add rejected pairs just to explain failures; describe bad targets in their image fields instead.
 - A valid target must contain the same complete source product object or source product set as real visible objects. Category does not matter: bottles, jars, boxes, bags, tools, devices, accessories, kits, and other products are all valid if the source product has useful logo/text/small-text identity to preserve.
 - It is OK if the source product is smaller, partly occluded, held by a person, surrounded by props, or accompanied by related products in the target. It is not OK if the source product object/set is absent, replaced by a different SKU, reduced to only a brand/logo/text panel, or only appears as printed packaging artwork.
+- For every pair, explicitly verify the source product object/set inventory against the target. Same brand, same logo, same text, related products, or related contents do not count unless the actual source product object/set is visible in the target.
+- Example: if the source is a green retail soap box, a target that only shows matching soap bars, fragrance props, or brand text without that same green box must set source_product_object_set_present_in_target=false. If the target still shows the same green box plus soap bars/props, it can be true.
+- Example: if the source is a bottle/jar/tube and the target shows that same object held by a person, in a lifestyle scene, or inside an ad layout, it can be true even with hands, faces, props, or partial occlusion.
 - If the source shows multiple major saleable objects, for example box + bottle, kit + applicator, two bottles, bag + compartment, or device + accessory, the target must preserve those same major objects unless the model explicitly marks the source extra object as a non-saleable prop. Do not accept targets that keep only one source component.
 - Do not accept package-form substitutions or additions: box-to-bottle, bottle-to-box, box-to-soap-bar-only, box-to-flat-lay-contents, jar-to-label, product-to-front-panel, adding an outer retail box that was not in the source, replacing the source SKU with only related collection/bundle/different SKU products, or targets where the product only appears as a printed picture on retail packaging.
 - Reject/down-score if source and target readable product-type words conflict, such as spray vs shampoo, bottle vs retail box, lotion vs soap, or serum vs shampoo.
 - Reject/down-score target images where the source product object/set is missing, replaced, cropped out, back/rear view when source is front, dense side/back label view, a pure size chart/manual/ingredient panel, feature table, text-only infographic, swatch board, before-after-only panel, or complex multi-panel/product-grid comparison collage.
 - Reject/down-score clean sources that include external color swatches, shade strips, smear samples, or variant comparison samples outside the product itself.
-- Do not reject a polished one-panel ad/lifestyle/infographic target only because it has headlines, benefit bullets, icon labels, ingredient props, rich styling, or a repeated copy of the same exact product, as long as the exact same complete product/package is fully visible and readable somewhere in the target.
+- Do not reject a polished one-panel ad/lifestyle/infographic target only because it has headlines, benefit bullets, icon labels, ingredient props, rich styling, or a repeated copy of the same exact product, as long as the exact same source product object/set remains identifiable in the target.
 - Reject/down-score side/back/rear packaging views with dense side-panel text when the source is a front package view.
 - Reject/down-score if the target appears to be a different product type, brand, formula, SKU, package, or visible product text, even if colors or category look similar.
 - Humans/faces/hands and partial occlusion are OK when the same source product object/set is still recognizable as present in the target.
 - Preserve brand/logo, front label, package shape, color, cap/pump/tube geometry, and useful small text.
-- Prefer controlled transformations that improve aesthetics: clean ad layout, polished lifestyle scene, better lighting/background, or controlled angle change. A high transformation is valid only when the same complete product/package remains fully visible and identity-safe.
+- Prefer controlled transformations that improve aesthetics: clean ad layout, polished lifestyle scene, better lighting/background, or controlled angle change. A high transformation is valid only when the same complete source product object/set remains identifiable and identity-safe.
 - Small text means fine label/capacity/ingredient/warning text, dense package copy, small ad callouts, and icon labels. OCR best-effort; use "[unreadable]" instead of inventing text.
 
 Text and description rules:
@@ -158,6 +161,9 @@ Return this compact JSON shape:
       "pair_quality_tier": "excellent/good/borderline/bad",
       "pair_quality_judgement": "strict concise judgement",
       "pair_failure_modes": [],
+      "source_product_object_set_present_in_target": true,
+      "source_product_presence_confidence": 0.0,
+      "source_product_missing_components": [],
       "identity_confidence": 0.0,
       "transformation_magnitude": "low/medium/high",
       "edit_scope_complexity": "simple/moderate/complex",
@@ -718,6 +724,43 @@ def source_identity_reasons(source: dict) -> list[str]:
     return []
 
 
+def meaningful_missing_components(value) -> list[str]:
+    items = []
+    for item in flatten_text_values(value):
+        item = str(item).strip()
+        if not item:
+            continue
+        if re.fullmatch(r"(none|no|n/a|na|null|\[\]|not applicable)", item, re.I):
+            continue
+        items.append(item)
+    return items
+
+
+def source_product_presence_reasons(pair: dict, args) -> list[str]:
+    reasons = []
+    present = pair.get("source_product_object_set_present_in_target")
+    if present is not None and not as_bool(present):
+        reasons.append("source_product_object_set_not_present_in_target")
+    confidence = pair.get("source_product_presence_confidence")
+    if confidence is not None and as_float(confidence, 1.0) < args.min_source_product_presence_confidence:
+        reasons.append(f"source_product_presence_confidence<{args.min_source_product_presence_confidence}")
+    if meaningful_missing_components(pair.get("source_product_missing_components")):
+        reasons.append("source_product_missing_components")
+    return reasons
+
+
+def pair_confirms_source_product_present(pair: dict, args) -> bool:
+    present = pair.get("source_product_object_set_present_in_target")
+    confidence = pair.get("source_product_presence_confidence")
+    if present is None:
+        return False
+    if not as_bool(present):
+        return False
+    if confidence is not None and as_float(confidence, 1.0) < args.min_source_product_presence_confidence:
+        return False
+    return not meaningful_missing_components(pair.get("source_product_missing_components"))
+
+
 def source_target_kind_conflict(source: dict, target: dict) -> bool:
     source_terms = product_kind_terms(image_identity_text(source))
     target_terms = product_kind_terms(image_identity_text(target))
@@ -744,7 +787,8 @@ def target_introduces_outer_packaging(source: dict, target: dict, pair: dict) ->
     source_has_box = re.search(r"\b(box|boxed|retail pack|outer package|outer box|carton)\b", source_text, re.I)
     target_has_added_box = re.search(
         r"\b(matching box|outer box|retail box|boxed retail|retail pack|"
-        r"plus (a )?(matching )?(box|package)|adds? (a )?(box|package)|with (a )?(matching )?box)\b",
+        r"plus (a )?(matching )?(box|outer box|retail box)|adds? (a )?(box|outer box|retail box)|"
+        r"with (a )?(matching )?(box|outer box|retail box))\b",
         target_text,
         re.I,
     )
@@ -771,29 +815,15 @@ def target_drops_source_package_or_container(source: dict, target: dict, pair: d
         target_text,
         re.I,
     )
-    return bool(source_has_box and target_drops_to_contents and not target_preserves_box)
-
-
-def target_introduces_related_products(source: dict, target: dict, pair: dict) -> bool:
-    source_text = image_identity_text(source)
-    target_text = " ".join([
-        image_identity_text(target),
-        " ".join(flatten_text_values(target.get("detailed_description"))),
-        " ".join(flatten_text_values(target.get("target_edit_description"))),
-        " ".join(flatten_text_values(pair.get("pair_quality_judgement"))),
-        " ".join(flatten_text_values(pair.get("pair_failure_modes"))),
-        " ".join(flatten_text_values(pair.get("edit_instruction"))),
-        " ".join(flatten_text_values(pair.get("edit_instruction_detailed"))),
-    ])
-    source_is_collection = re.search(r"\b(collection|bundle|set|kit|multi[- ]?pack|group shot)\b", source_text, re.I)
-    target_is_replacement = re.search(
-        r"\b(only related products?|only a related collection|replaces? .{0,30}source (sku|product)|"
-        r"different sku|different skus|not an exact product match|different visible product text|"
-        r"source product (is )?(absent|missing)|without the source product)\b",
+    target_has_box = re.search(r"\b(box|boxed|package|packaging|retail pack|outer box|carton)\b", target_text, re.I)
+    target_shows_loose_contents = re.search(
+        r"\b(soap bars?|beauty bars?|loose contents?|individual items?|flat[- ]?lay|unboxed contents?)\b",
         target_text,
         re.I,
     )
-    return bool(target_is_replacement and not source_is_collection)
+    return bool(source_has_box and not target_preserves_box and (
+        target_drops_to_contents or (target_shows_loose_contents and not target_has_box)
+    ))
 
 
 def source_complexity_reasons(source: dict, args) -> list[str]:
@@ -854,7 +884,7 @@ def target_complexity_reasons(source: dict, target: dict, pair: dict, args) -> l
         re.I,
     ):
         reasons.append("target_complex_collage_or_variant_layout")
-    if re.search(
+    if not pair_confirms_source_product_present(pair, args) and re.search(
         r"\b(text[- ]only infographic|feature table|specification table|ingredient panel|size chart|"
         r"instruction manual|label[- ]only|no physical product|"
         r"product only appears as (a )?printed (picture|image))\b",
@@ -923,6 +953,7 @@ def postprocess_annotation(annotation: dict, args) -> tuple[dict, list[dict]]:
         small_text_preservation_chars = text_len(pair.get("small_text_preservation"))
         source_small_text_ocr_chars = small_text_ocr_len(source)
         target_small_text_ocr_chars = small_text_ocr_len(target)
+        presence_reasons = source_product_presence_reasons(pair, args)
         strong_model_pair = (
             pair_type in {"main_to_ad", "main_to_angle", "main_to_lifestyle", "angle_to_ad", "main_to_infographic"}
             and pair.get("is_high_quality_pair") is True
@@ -938,7 +969,7 @@ def postprocess_annotation(annotation: dict, args) -> tuple[dict, list[dict]]:
             and not target_introduces_outer_packaging(source, target, pair)
             and not target_drops_source_package_or_container(source, target, pair)
             and not target_drops_source_product_count(source, target)
-            and not target_introduces_related_products(source, target, pair)
+            and not presence_reasons
         )
 
         if pair_type not in allowed_pair_types:
@@ -963,7 +994,7 @@ def postprocess_annotation(annotation: dict, args) -> tuple[dict, list[dict]]:
             reasons.append(f"target_quality_score<{args.min_pair_target_quality_score}")
         if target_visibility < args.min_pair_target_visibility and not strong_model_pair:
             reasons.append(f"target_product_visibility<{args.min_pair_target_visibility}")
-        if not target_full_product_visible:
+        if not target_full_product_visible and not pair_confirms_source_product_present(pair, args):
             reasons.append("target_full_product_not_visible")
         if target_same < args.min_pair_target_same_confidence:
             reasons.append(f"target_same_product_confidence<{args.min_pair_target_same_confidence}")
@@ -1009,8 +1040,7 @@ def postprocess_annotation(annotation: dict, args) -> tuple[dict, list[dict]]:
             reasons.append("target_drops_source_package_or_container")
         if target_drops_source_product_count(source, target):
             reasons.append("target_drops_source_product_count")
-        if target_introduces_related_products(source, target, pair):
-            reasons.append("target_introduces_related_products_or_different_sku")
+        reasons.extend(presence_reasons)
         reasons.extend(target_complexity_reasons(source, target, pair, args))
         if target_role in blocked_roles:
             reasons.append(f"blocked_target_role:{target_role}")
@@ -1064,6 +1094,7 @@ def postprocess_annotation(annotation: dict, args) -> tuple[dict, list[dict]]:
         "min_pair_target_quality_score": args.min_pair_target_quality_score,
         "min_pair_target_visibility": args.min_pair_target_visibility,
         "min_pair_target_same_confidence": args.min_pair_target_same_confidence,
+        "min_source_product_presence_confidence": args.min_source_product_presence_confidence,
         "min_pair_identity_confidence": args.min_pair_identity_confidence,
         "min_pair_target_aesthetic_score": args.min_pair_target_aesthetic_score,
         "min_pair_logo_preservation_score": args.min_pair_logo_preservation_score,
@@ -1173,6 +1204,7 @@ def parse_args():
     parser.add_argument("--min-pair-target-visibility", type=float, default=0.25)
     parser.add_argument("--min-pair-human-target-visibility", type=float, default=0.75, help=argparse.SUPPRESS)
     parser.add_argument("--min-pair-target-same-confidence", type=float, default=0.85)
+    parser.add_argument("--min-source-product-presence-confidence", type=float, default=0.75)
     parser.add_argument("--min-pair-identity-confidence", type=float, default=0.85)
     parser.add_argument("--min-pair-target-aesthetic-score", type=float, default=0.0)
     parser.add_argument("--min-pair-logo-preservation-score", type=float, default=0.0)

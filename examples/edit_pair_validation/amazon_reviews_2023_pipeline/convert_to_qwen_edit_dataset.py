@@ -68,6 +68,9 @@ def iter_pair_records(path: Path):
                 "pair_quality_tier": pair.get("pair_quality_tier"),
                 "pair_quality_judgement": pair.get("pair_quality_judgement"),
                 "pair_failure_modes": pair.get("pair_failure_modes", []),
+                "source_product_object_set_present_in_target": pair.get("source_product_object_set_present_in_target"),
+                "source_product_presence_confidence": pair.get("source_product_presence_confidence"),
+                "source_product_missing_components": pair.get("source_product_missing_components"),
                 "edit_scope_complexity": pair.get("edit_scope_complexity"),
                 "identity_confidence": pair.get("identity_confidence"),
                 "training_value_score": pair.get("training_value_score"),
@@ -111,6 +114,36 @@ def small_text_ocr_len(image: dict) -> int:
         if isinstance(span, dict) and span.get("text"):
             parts.append(str(span.get("text")))
     return text_len(" ".join(parts))
+
+
+def flatten_text_values(value) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, dict):
+        parts = []
+        for child in value.values():
+            parts.extend(flatten_text_values(child))
+        return parts
+    if isinstance(value, list):
+        parts = []
+        for child in value:
+            parts.extend(flatten_text_values(child))
+        return parts
+    return [str(value)]
+
+
+def meaningful_missing_components(value) -> list[str]:
+    items = []
+    for item in flatten_text_values(value):
+        item = str(item).strip()
+        if not item:
+            continue
+        if re.fullmatch(r"(none|no|n/a|na|null|\[\]|not applicable)", item, re.I):
+            continue
+        items.append(item)
+    return items
 
 
 def is_complex_source(record: dict, args) -> bool:
@@ -190,6 +223,13 @@ def keep_pair(record, args):
     if args.small_text_only and as_float(record.get("small_text_training_value_score")) < args.min_small_text_training_score:
         return False
     if args.require_model_high_quality_pair and record.get("is_high_quality_pair") is not True:
+        return False
+    if pair.get("source_product_object_set_present_in_target") is False:
+        return False
+    presence_confidence = pair.get("source_product_presence_confidence")
+    if presence_confidence is not None and as_float(presence_confidence, 1.0) < args.min_source_product_presence_confidence:
+        return False
+    if meaningful_missing_components(pair.get("source_product_missing_components")):
         return False
     if as_float(record.get("pair_quality_score")) < args.min_pair_quality_score:
         return False
@@ -288,6 +328,7 @@ def parse_args():
     parser.add_argument("--min-small-text-training-score", type=float, default=0.5)
     parser.add_argument("--require-model-high-quality-pair", action="store_true")
     parser.add_argument("--min-pair-quality-score", type=float, default=0.0)
+    parser.add_argument("--min-source-product-presence-confidence", type=float, default=0.75)
     parser.add_argument("--pair-type-regex", default="main_to_ad|main_to_angle|main_to_lifestyle|main_to_infographic|angle_to_ad")
     parser.add_argument("--reject-complex-targets", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--max-source-product-instance-count", type=float, default=2)
@@ -362,6 +403,9 @@ def main():
             "pair_quality_tier": record.get("pair_quality_tier"),
             "pair_quality_judgement": record.get("pair_quality_judgement"),
             "pair_failure_modes": record.get("pair_failure_modes"),
+            "source_product_object_set_present_in_target": record.get("source_product_object_set_present_in_target"),
+            "source_product_presence_confidence": record.get("source_product_presence_confidence"),
+            "source_product_missing_components": record.get("source_product_missing_components"),
             "identity_confidence": record.get("identity_confidence"),
             "training_value_score": record.get("training_value_score"),
             "edit_usefulness_score": record.get("edit_usefulness_score"),

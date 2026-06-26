@@ -118,6 +118,9 @@ def pair_card(pair: dict, source_item: dict, target_item: dict, source_label: di
           {metric("target A", target_label.get("aesthetic_score"))}
           {metric("aesthetic +", pair.get("aesthetic_improvement_score"))}
           {metric("transform", pair.get("transformation_magnitude"))}
+          {metric("src present", pair.get("source_product_object_set_present_in_target"))}
+          {metric("src conf", pair.get("source_product_presence_confidence"))}
+          {metric("missing", pair.get("source_product_missing_components"))}
         </div>
       </header>
       <div class="pair-images">
