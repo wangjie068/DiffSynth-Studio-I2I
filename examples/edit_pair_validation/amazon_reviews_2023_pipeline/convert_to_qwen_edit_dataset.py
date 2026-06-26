@@ -165,7 +165,12 @@ def is_complex_target(record: dict, args) -> bool:
 
 def blocked_product_for_training(product: dict) -> bool:
     text = " ".join(str(product.get(key) or "") for key in ["product_type", "form_factor", "notes"])
-    return bool(re.search(r"\b(toiletry bag|makeup bag|cosmetic bag|jewelry compartment|organizer|holder|case)\b", text, re.I))
+    return bool(re.search(
+        r"\b(toiletry bag|makeup bag|cosmetic bag|jewelry compartment|organizer|holder|case|"
+        r"sponge|brush|comb|applicator|hair tool|styling tool)\b",
+        text,
+        re.I,
+    ))
 
 
 def keep_pair(record, args):

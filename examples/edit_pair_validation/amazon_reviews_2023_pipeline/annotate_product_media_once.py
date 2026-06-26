@@ -26,22 +26,22 @@ Goal: select high-quality source-target product image pairs for training. Keep o
 
 Hard rules:
 - You receive N numbered images. Return exactly one "images" item for every input image_index. Do not omit bad images; mark them exclude.
-- Select the best clean source image yourself; Amazon MAIN is only a hint. Prefer a simple single-unit product-only/catalog image on a white/transparent/studio background with the front logo/label readable as source. If both a white-background catalog source and a styled/lifestyle/prop source exist, choose the white-background catalog source. If both a single product package and a multi-pack/bundle/group shot exist, choose the single product package as source. Do not choose a source whose brand/product identity is mostly unreadable unless no usable product-label source exists. Images with fruit, flowers, ingredient props, lifestyle background, marketing layout, or richer styling are usually targets, not sources.
+- Select the best clean source image yourself; Amazon MAIN is only a hint. Prefer a simple bottle/jar/tube/box/container product-only catalog image on a white/transparent/studio background with the front logo/label readable as source. If both a white-background catalog source and a styled/lifestyle/prop source exist, choose the white-background catalog source. If both a single product package and a multi-pack/bundle/group shot exist, choose the single product package as source. Do not choose a source whose brand/product identity is mostly unreadable unless no usable product-label source exists. Exclude tools/accessories such as bags, cases, sponges, brushes, combs, applicator tools, holders, and organizers. Images with fruit, flowers, ingredient props, lifestyle background, marketing layout, or richer styling are usually targets, not sources.
 - If two images show the same product where one is clean/product-only and the other is styled/prop/ad/lifestyle, output the pair in clean-to-styled direction, not the reverse.
 - Select every high-value training pair from the chosen source, usually 1-6 if available. Do not chase coverage; skip borderline, redundant, or merely acceptable pairs.
 - The "pairs" array should contain only plausible training candidates. Do not add rejected pairs just to explain failures; describe bad targets in their image fields instead.
-- A valid target must contain the same complete saleable product/package as the source, as a real visible product object rather than only printed packaging artwork or label text.
+- A valid target must contain the same complete saleable product/package as the source, as a real visible product object rather than only printed packaging artwork, logo, brand card, label text, copy block, ingredient photo, or usage scene without the product.
 - If the source shows multiple major saleable objects, for example box + bottle, box + tube, jar + outer box, or palette + shade swatches, the target must preserve those same major objects. Do not accept targets that drop the box/package, drop the bottle/jar/tube, or keep only one component.
-- Do not accept package-form substitutions or additions: box-to-bottle, bottle-to-box, box-to-soap-bar-only, box-to-flat-lay-contents, jar-to-label, product-to-front-panel, adding an outer retail box that was not in the source, source single SKU to related collection/bundle/different SKU, or targets where the product only appears as a printed picture on retail packaging.
+- Do not accept package-form substitutions or additions: box-to-bottle, bottle-to-box, box-to-soap-bar-only, box-to-flat-lay-contents, jar-to-label, product-to-front-panel, adding an outer retail box that was not in the source, replacing the source SKU with only related collection/bundle/different SKU products, or targets where the product only appears as a printed picture on retail packaging.
 - Reject/down-score if source and target readable product-type words conflict, such as spray vs shampoo, bottle vs retail box, lotion vs soap, or serum vs shampoo.
 - Reject/down-score target images where the product is missing, tiny, incidental, cropped, back/rear view, dense side/back label view, a pure size chart/manual/ingredient panel, feature table, text-only infographic, swatch board, before-after-only panel, or complex multi-panel/product-grid comparison collage.
 - Reject/down-score clean sources that include external color swatches, shade strips, smear samples, or variant comparison samples outside the product itself.
-- Do not reject a polished one-panel ad/lifestyle/infographic target only because it has headlines, benefit bullets, icon labels, ingredient props, rich styling, or a repeated copy of the same exact product, as long as the exact same complete product/package remains dominant and readable.
+- Do not reject a polished one-panel ad/lifestyle/infographic target only because it has headlines, benefit bullets, icon labels, ingredient props, rich styling, or a repeated copy of the same exact product, as long as the exact same complete product/package is fully visible and readable somewhere in the target.
 - Reject/down-score side/back/rear packaging views with dense side-panel text when the source is a front package view.
 - Reject/down-score if the target appears to be a different product type, brand, formula, SKU, package, or visible product text, even if colors or category look similar.
-- Humans/faces/hands are OK only when the complete product remains clear and dominant.
+- Humans/faces/hands are OK only when the same complete product remains fully visible and recognizable, not meaningfully occluded by hands, hair, face, or body.
 - Preserve brand/logo, front label, package shape, color, cap/pump/tube geometry, and useful small text.
-- Prefer controlled transformations that improve aesthetics: clean ad layout, polished lifestyle scene, better lighting/background, or controlled angle change. A high transformation is valid only when the same complete product/package remains dominant and identity-safe.
+- Prefer controlled transformations that improve aesthetics: clean ad layout, polished lifestyle scene, better lighting/background, or controlled angle change. A high transformation is valid only when the same complete product/package remains fully visible and identity-safe.
 - Small text means fine label/capacity/ingredient/warning text, dense package copy, small ad callouts, and icon labels. OCR best-effort; use "[unreadable]" instead of inventing text.
 
 Text and description rules:
@@ -540,6 +540,14 @@ def product_reject_reasons(annotation: dict, args) -> list[str]:
     return reasons
 
 
+def target_drops_source_product_count(source: dict, target: dict) -> bool:
+    source_count = as_float(source.get("product_instance_count"), 1.0)
+    target_count = as_float(target.get("product_instance_count"), 1.0)
+    if source_count <= 1:
+        return False
+    return target_count + 0.25 < source_count
+
+
 def target_is_back_view(target: dict, pair: dict) -> bool:
     target_view = str(target.get("product_view") or target.get("view_orientation") or "").lower()
     pair_view = str(pair.get("view_change") or "").lower()
@@ -619,17 +627,19 @@ def pair_declares_missing_source_component(pair: dict) -> bool:
         pair.get("edit_instruction"),
         pair.get("edit_instruction_detailed"),
     ]))
-    if re.search(r"\b(keep|preserv(e|ing)|contains?|includes?)\b.{0,40}\b(box|package|packaging|bottle|jar|tube)\b", text, re.I):
+    if re.search(r"\b(keep|preserv(e|ing)|contains?|includes?|remains?)\b.{0,40}\b(product|box|package|packaging|bottle|jar|tube)\b", text, re.I):
         return False
     return bool(re.search(
-        r"\b((package|box|bottle|jar|tube) (is )?absent|missing (the )?(box|package|packaging|bottle|jar|tube)|"
-        r"drops? (the )?(box|package|packaging|bottle|jar|tube)|"
-        r"target drops? (the )?(box|package|packaging|bottle|jar|tube)|"
+        r"\b((product object|physical product|package|box|bottle|jar|tube) (is )?absent|"
+        r"missing (the )?(product object|physical product|box|package|packaging|bottle|jar|tube)|"
+        r"drops? (the )?(product object|physical product|box|package|packaging|bottle|jar|tube)|"
+        r"target drops? (the )?(product object|physical product|box|package|packaging|bottle|jar|tube)|"
         r"bar[- ]only|bottle[- ]only|jar[- ]only|label[- ]only|front[- ]panel|"
         r"less direct identity match|package form|packaging transformation|package is absent|"
         r"box[- ]to[- ]bottle|bottle[- ]to[- ]box|jar[- ]to[- ]label|"
         r"retail[- ]box (ad|target|front pack)|front pack target|"
-        r"printed (picture|image|artwork) on (the )?(box|package))\b",
+        r"printed (picture|image|artwork) on (the )?(box|package)|"
+        r"brand[- ]led rather than pack[- ]led|usage scene without (the )?product)\b",
         text,
         re.I,
     ) or re.search(
@@ -774,15 +784,15 @@ def target_introduces_related_products(source: dict, target: dict, pair: dict) -
         " ".join(flatten_text_values(pair.get("edit_instruction"))),
         " ".join(flatten_text_values(pair.get("edit_instruction_detailed"))),
     ])
-    source_is_collection = re.search(r"\b(collection|bundle|set|kit|multi[- ]?pack|group shot|related products)\b", source_text, re.I)
-    target_is_related_collection = re.search(
-        r"\b(related products?|related .{0,20}products?|collection image|collection ad|"
-        r"same line collection|compatible beauty line|same brand compatible|bundle reference|"
-        r"different sku|different skus|not an exact product match|expands to a collection)\b",
+    source_is_collection = re.search(r"\b(collection|bundle|set|kit|multi[- ]?pack|group shot)\b", source_text, re.I)
+    target_is_replacement = re.search(
+        r"\b(only related products?|only a related collection|replaces? .{0,30}source (sku|product)|"
+        r"different sku|different skus|not an exact product match|different visible product text|"
+        r"source product (is )?(absent|missing)|without the source product)\b",
         target_text,
         re.I,
     )
-    return bool(target_is_related_collection and not source_is_collection)
+    return bool(target_is_replacement and not source_is_collection)
 
 
 def source_complexity_reasons(source: dict, args) -> list[str]:
@@ -926,6 +936,7 @@ def postprocess_annotation(annotation: dict, args) -> tuple[dict, list[dict]]:
             and not source_target_kind_conflict(source, target)
             and not target_introduces_outer_packaging(source, target, pair)
             and not target_drops_source_package_or_container(source, target, pair)
+            and not target_drops_source_product_count(source, target)
             and not target_introduces_related_products(source, target, pair)
         )
 
@@ -951,9 +962,9 @@ def postprocess_annotation(annotation: dict, args) -> tuple[dict, list[dict]]:
             reasons.append(f"target_quality_score<{args.min_pair_target_quality_score}")
         if target_visibility < args.min_pair_target_visibility and not strong_model_pair:
             reasons.append(f"target_product_visibility<{args.min_pair_target_visibility}")
-        if not target_full_product_visible and not strong_model_pair:
+        if not target_full_product_visible:
             reasons.append("target_full_product_not_visible")
-        if target_same < args.min_pair_target_same_confidence and not strong_model_pair:
+        if target_same < args.min_pair_target_same_confidence:
             reasons.append(f"target_same_product_confidence<{args.min_pair_target_same_confidence}")
         if identity < args.min_pair_identity_confidence:
             reasons.append(f"pair_identity_confidence<{args.min_pair_identity_confidence}")
@@ -995,6 +1006,8 @@ def postprocess_annotation(annotation: dict, args) -> tuple[dict, list[dict]]:
             reasons.append("target_introduces_outer_packaging_not_in_source")
         if target_drops_source_package_or_container(source, target, pair):
             reasons.append("target_drops_source_package_or_container")
+        if target_drops_source_product_count(source, target):
+            reasons.append("target_drops_source_product_count")
         if target_introduces_related_products(source, target, pair):
             reasons.append("target_introduces_related_products_or_different_sku")
         reasons.extend(target_complexity_reasons(source, target, pair, args))
@@ -1169,7 +1182,8 @@ def parse_args():
         default=(
             r"nail art|nail sticker|sticker|decal|temporary tattoo|water transfer|"
             r"pattern sheet|flat decorative sheet|swatch-like design|toiletry bag|"
-            r"makeup bag|cosmetic bag|jewelry compartment|organizer|holder|case"
+            r"makeup bag|cosmetic bag|jewelry compartment|organizer|holder|case|"
+            r"sponge|brush|comb|applicator|hair tool|styling tool"
         ),
     )
     parser.add_argument("--reject-target-back-view", action=argparse.BooleanOptionalAction, default=True)
