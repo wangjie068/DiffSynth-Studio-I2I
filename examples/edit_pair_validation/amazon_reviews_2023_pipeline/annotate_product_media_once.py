@@ -26,20 +26,21 @@ Goal: select high-quality source-target product image pairs for training. Keep o
 
 Hard rules:
 - You receive N numbered images. Return exactly one "images" item for every input image_index. Do not omit bad images; mark them exclude.
-- Select the best clean source image yourself; Amazon MAIN is only a hint. Prefer a simple bottle/jar/tube/box/container product-only catalog image on a white/transparent/studio background with the front logo/label readable as source. If both a white-background catalog source and a styled/lifestyle/prop source exist, choose the white-background catalog source. If both a single product package and a multi-pack/bundle/group shot exist, choose the single product package as source. Do not choose a source whose brand/product identity is mostly unreadable unless no usable product-label source exists. Exclude tools/accessories such as bags, cases, sponges, brushes, combs, applicator tools, holders, and organizers. Images with fruit, flowers, ingredient props, lifestyle background, marketing layout, or richer styling are usually targets, not sources.
+- Select the best clean source image yourself; Amazon MAIN is only a hint. Prefer a simple product-only catalog image on a white/transparent/studio background with readable product logo/text/small text. If both a white-background catalog source and a styled/lifestyle/prop source exist, choose the white-background catalog source. If both a single product and a multi-pack/bundle/group shot exist, choose the source whose complete product set is most likely to reappear in targets. Do not choose a source whose product identity text is mostly unreadable unless no usable text-bearing source exists. Images with fruit, flowers, ingredient props, lifestyle background, marketing layout, or richer styling are usually targets, not sources.
 - If two images show the same product where one is clean/product-only and the other is styled/prop/ad/lifestyle, output the pair in clean-to-styled direction, not the reverse.
 - Select every high-value training pair from the chosen source, usually 1-6 if available. Do not chase coverage; skip borderline, redundant, or merely acceptable pairs.
 - The "pairs" array should contain only plausible training candidates. Do not add rejected pairs just to explain failures; describe bad targets in their image fields instead.
-- A valid target must contain the same complete saleable product/package as the source, as a real visible product object rather than only printed packaging artwork, logo, brand card, label text, copy block, ingredient photo, or usage scene without the product.
-- If the source shows multiple major saleable objects, for example box + bottle, box + tube, jar + outer box, or palette + shade swatches, the target must preserve those same major objects. Do not accept targets that drop the box/package, drop the bottle/jar/tube, or keep only one component.
+- A valid target must contain the same complete source product object or source product set as real visible objects. Category does not matter: bottles, jars, boxes, bags, tools, devices, accessories, kits, and other products are all valid if the source product has useful logo/text/small-text identity to preserve.
+- It is OK if the source product is smaller, partly occluded, held by a person, surrounded by props, or accompanied by related products in the target. It is not OK if the source product object/set is absent, replaced by a different SKU, reduced to only a brand/logo/text panel, or only appears as printed packaging artwork.
+- If the source shows multiple major saleable objects, for example box + bottle, kit + applicator, two bottles, bag + compartment, or device + accessory, the target must preserve those same major objects unless the model explicitly marks the source extra object as a non-saleable prop. Do not accept targets that keep only one source component.
 - Do not accept package-form substitutions or additions: box-to-bottle, bottle-to-box, box-to-soap-bar-only, box-to-flat-lay-contents, jar-to-label, product-to-front-panel, adding an outer retail box that was not in the source, replacing the source SKU with only related collection/bundle/different SKU products, or targets where the product only appears as a printed picture on retail packaging.
 - Reject/down-score if source and target readable product-type words conflict, such as spray vs shampoo, bottle vs retail box, lotion vs soap, or serum vs shampoo.
-- Reject/down-score target images where the product is missing, tiny, incidental, cropped, back/rear view, dense side/back label view, a pure size chart/manual/ingredient panel, feature table, text-only infographic, swatch board, before-after-only panel, or complex multi-panel/product-grid comparison collage.
+- Reject/down-score target images where the source product object/set is missing, replaced, cropped out, back/rear view when source is front, dense side/back label view, a pure size chart/manual/ingredient panel, feature table, text-only infographic, swatch board, before-after-only panel, or complex multi-panel/product-grid comparison collage.
 - Reject/down-score clean sources that include external color swatches, shade strips, smear samples, or variant comparison samples outside the product itself.
 - Do not reject a polished one-panel ad/lifestyle/infographic target only because it has headlines, benefit bullets, icon labels, ingredient props, rich styling, or a repeated copy of the same exact product, as long as the exact same complete product/package is fully visible and readable somewhere in the target.
 - Reject/down-score side/back/rear packaging views with dense side-panel text when the source is a front package view.
 - Reject/down-score if the target appears to be a different product type, brand, formula, SKU, package, or visible product text, even if colors or category look similar.
-- Humans/faces/hands are OK only when the same complete product remains fully visible and recognizable, not meaningfully occluded by hands, hair, face, or body.
+- Humans/faces/hands and partial occlusion are OK when the same source product object/set is still recognizable as present in the target.
 - Preserve brand/logo, front label, package shape, color, cap/pump/tube geometry, and useful small text.
 - Prefer controlled transformations that improve aesthetics: clean ad layout, polished lifestyle scene, better lighting/background, or controlled angle change. A high transformation is valid only when the same complete product/package remains fully visible and identity-safe.
 - Small text means fine label/capacity/ingredient/warning text, dense package copy, small ad callouts, and icon labels. OCR best-effort; use "[unreadable]" instead of inventing text.
@@ -1181,9 +1182,7 @@ def parse_args():
         "--blocked-product-regex",
         default=(
             r"nail art|nail sticker|sticker|decal|temporary tattoo|water transfer|"
-            r"pattern sheet|flat decorative sheet|swatch-like design|toiletry bag|"
-            r"makeup bag|cosmetic bag|jewelry compartment|organizer|holder|case|"
-            r"sponge|brush|comb|applicator|hair tool|styling tool"
+            r"pattern sheet|flat decorative sheet|swatch-like design"
         ),
     )
     parser.add_argument("--reject-target-back-view", action=argparse.BooleanOptionalAction, default=True)

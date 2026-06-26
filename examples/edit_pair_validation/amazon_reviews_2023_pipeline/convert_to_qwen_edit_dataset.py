@@ -166,8 +166,8 @@ def is_complex_target(record: dict, args) -> bool:
 def blocked_product_for_training(product: dict) -> bool:
     text = " ".join(str(product.get(key) or "") for key in ["product_type", "form_factor", "notes"])
     return bool(re.search(
-        r"\b(toiletry bag|makeup bag|cosmetic bag|jewelry compartment|organizer|holder|case|"
-        r"sponge|brush|comb|applicator|hair tool|styling tool)\b",
+        r"\b(nail art|nail sticker|sticker|decal|temporary tattoo|water transfer|"
+        r"pattern sheet|flat decorative sheet|swatch-like design)\b",
         text,
         re.I,
     ))
