@@ -603,7 +603,9 @@ def target_is_side_text_view(source: dict, target: dict, pair: dict) -> bool:
     target_mentions_dense_side = bool(re.search(
         r"\b(side text|side copy|side label|side panel|side[- ]panel|dense side|"
         r"side becomes more visible|dense copy increases text[- ]preservation difficulty|"
-        r"dense package copy|dense side[- ]panel|angled (box|package) .{0,40}(side|dense copy))\b",
+        r"dense package copy|dense side[- ]panel|angled (box|package) .{0,40}(side|dense copy)|"
+        r"brand name partially visible on (the )?right edge|front (label|identity|branding).{0,40}"
+        r"(hidden|replaced|turned away|missing|less visible))\b",
         descriptive_text,
         re.I,
     ))
@@ -653,7 +655,9 @@ def pair_declares_missing_source_component(pair: dict) -> bool:
         r"drops? (the )?(product object|physical product|box|package|packaging|bottle|jar|tube)|"
         r"target drops? (the )?(product object|physical product|box|package|packaging|bottle|jar|tube)|"
         r"bar[- ]only|bottle[- ]only|jar[- ]only|label[- ]only|front[- ]panel|"
-        r"less direct identity match|package form|packaging transformation|package is absent|"
+        r"less direct identity match|package is absent|"
+        r"package form (changes?|differs?|is missing|is lost|substitution|mismatch)|"
+        r"packaging transformation (drops?|removes?|loses?)|"
         r"box[- ]to[- ]bottle|bottle[- ]to[- ]box|jar[- ]to[- ]label|"
         r"retail[- ]box (ad|target|front pack)|front pack target|"
         r"printed (picture|image|artwork) on (the )?(box|package)|"
@@ -964,7 +968,7 @@ def postprocess_annotation(annotation: dict, args) -> tuple[dict, list[dict]]:
         target_small_text_ocr_chars = small_text_ocr_len(target)
         presence_reasons = source_product_presence_reasons(pair, args)
         strong_model_pair = (
-            pair_type in {"main_to_ad", "main_to_angle", "main_to_lifestyle", "angle_to_ad", "main_to_infographic"}
+            pair_type in {"main_to_ad", "main_to_angle", "main_to_lifestyle", "main_to_detail", "angle_to_ad", "main_to_infographic"}
             and pair.get("is_high_quality_pair") is True
             and pair_quality >= args.min_pair_quality_score
             and identity >= args.min_pair_identity_confidence
