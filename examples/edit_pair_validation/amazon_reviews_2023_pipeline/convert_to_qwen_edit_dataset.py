@@ -154,7 +154,7 @@ def is_complex_source(record: dict, args) -> bool:
         return True
     if source_label.get("has_multiple_product_views") or source_label.get("has_color_or_variant_swatches"):
         return True
-    return as_float(source_label.get("product_instance_count"), 1.0) > args.max_source_product_instance_count
+    return False
 
 
 def is_complex_target(record: dict, args) -> bool:

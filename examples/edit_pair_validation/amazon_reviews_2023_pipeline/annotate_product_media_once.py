@@ -27,6 +27,7 @@ Goal: select high-quality source-target product image pairs for training. Keep o
 Hard rules:
 - You receive N numbered images. Return exactly one "images" item for every input image_index. Do not omit bad images; mark them exclude.
 - Select the best clean source image yourself; Amazon MAIN is only a hint. Prefer a simple product-only catalog image on a white/transparent/studio background with readable product logo/text/small text. If both a white-background catalog source and a styled/lifestyle/prop source exist, choose the white-background catalog source. If both a single product and a multi-pack/bundle/group shot exist, choose the source whose complete product set is most likely to reappear in targets. Do not choose a source whose product identity text is mostly unreadable unless no usable text-bearing source exists. Images with fruit, flowers, ingredient props, lifestyle background, marketing layout, or richer styling are usually targets, not sources.
+- If several clean source candidates exist in the same product family, choose the one whose visible color, package form, size, and SKU best match the strongest target candidates. Do not create a color/package-change pair when a cleaner same-color/same-package source exists.
 - If two images show the same product where one is clean/product-only and the other is styled/prop/ad/lifestyle, output the pair in clean-to-styled direction, not the reverse.
 - Select every high-value training pair from the chosen source, usually 1-6 if available. Do not chase coverage; skip borderline, redundant, or merely acceptable pairs.
 - The "pairs" array should contain only plausible training candidates. Do not add rejected pairs just to explain failures; describe bad targets in their image fields instead.
@@ -595,15 +596,14 @@ def target_is_side_text_view(source: dict, target: dict, pair: dict) -> bool:
             pair.get("pair_failure_modes"),
         ]
     )
-    return source_is_front and (
-        (target_is_side and target_text_density in {"medium", "high"})
-        or re.search(
-            r"\b(side text|side panel|side copy|side label|dense side|side becomes more visible|"
-            r"dense copy increases text[- ]preservation difficulty|dense package copy)\b",
-            descriptive_text,
-            re.I,
-        )
-    )
+    if not source_is_front or not target_is_side:
+        return False
+    return target_text_density in {"medium", "high"} or bool(re.search(
+        r"\b(side text|side copy|side label|dense side|side becomes more visible|"
+        r"dense copy increases text[- ]preservation difficulty|dense package copy)\b",
+        descriptive_text,
+        re.I,
+    ))
 
 
 def pair_declares_product_mismatch(pair: dict) -> bool:
@@ -809,7 +809,8 @@ def target_drops_source_package_or_container(source: dict, target: dict, pair: d
     source_has_box = re.search(r"\b(box|boxed|retail pack|outer package|outer box|carton)\b", source_text, re.I)
     target_preserves_box = re.search(r"\b(same|full|complete|preserve[sd]?|keeps?) .{0,25}\b(box|package|packaging|carton)\b", target_text, re.I)
     target_drops_to_contents = re.search(
-        r"\b(box[- ]to[- ](soap[- ])?bar|box .{0,40} into .{0,40}(soap bars?|bars?|flat[- ]?lay|contents)|"
+        r"\b(box[- ]to[- ]((soap[- ])?bar|bottle|jar|tube|container|product[- ]only)|"
+        r"box .{0,40} into .{0,40}(soap bars?|bars?|flat[- ]?lay|contents|bottle[- ]only|jar[- ]only|tube[- ]only|single bottle|single jar)|"
         r"target drops? .{0,20}(box|package|packaging)|package is absent|"
         r"drops? the box|bar[- ]only|soap[- ]bar[- ]only|shifts? to bar[- ]only)\b",
         target_text,
@@ -830,7 +831,6 @@ def source_complexity_reasons(source: dict, args) -> list[str]:
     reasons = []
     layout_type = str(source.get("layout_type") or "").lower()
     layout_complexity = str(source.get("layout_complexity") or "").lower()
-    product_count = as_float(source.get("product_instance_count"), 1.0)
     descriptive_text = " ".join(
         str(value or "")
         for value in [
@@ -847,8 +847,6 @@ def source_complexity_reasons(source: dict, args) -> list[str]:
         reasons.append("source_has_color_or_variant_swatches")
     if re.search(r"\b(color|shade|variant)?\s*(swatches?|smears?|streaks?|sample strips?)\b", descriptive_text, re.I):
         reasons.append("source_has_external_swatch_samples")
-    if product_count > args.max_source_product_instance_count:
-        reasons.append(f"source_product_instance_count>{args.max_source_product_instance_count}")
     return reasons
 
 
