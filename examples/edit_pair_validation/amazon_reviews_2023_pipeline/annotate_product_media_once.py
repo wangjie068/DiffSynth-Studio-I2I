@@ -37,7 +37,8 @@ Hard rules:
 - Do not set source_product_object_set_present_in_target=true when the target only shows a similar functional item with changed visible product color, material, package form, language/script, or text identity. A purple organizer becoming a black scrub pocket is not the same source product.
 - Example: if the source is a green retail soap box, a target that only shows matching soap bars, fragrance props, or brand text without that same green box must set source_product_object_set_present_in_target=false. If the target still shows the same green box plus soap bars/props, it can be true.
 - Example: if the source is a bottle/jar/tube and the target shows that same object held by a person, in a lifestyle scene, or inside an ad layout, it can be true even with hands, faces, props, or partial occlusion.
-- If the source shows multiple major saleable objects, for example box + bottle, kit + applicator, two bottles, bag + compartment, or device + accessory, the target must preserve those same major objects unless the model explicitly marks the source extra object as a non-saleable prop. Do not accept targets that keep only one source component.
+- If the source shows multiple major saleable objects, for example box + bottle, kit + applicator, two bottles, bag + compartment, or device + accessory, the target may focus on one exact source object when that object remains complete and identity-safe. Do not reject only because a multi-object source becomes a one-object target.
+- If the source shows one major saleable product object, do not accept targets that introduce extra saleable products, related collection items, variants, or other SKUs around it. A one-product source becoming a multi-product catalog group is not a valid pair.
 - Do not accept package-form substitutions or additions: box-to-bottle, bottle-to-box, box-to-soap-bar-only, box-to-flat-lay-contents, jar-to-label, product-to-front-panel, adding an outer retail box that was not in the source, replacing the source SKU with only related collection/bundle/different SKU products, or targets where the product only appears as a printed picture on retail packaging.
 - Do not accept a clean front package/source image converted into a back/rear/side information panel with dense copy, even when it is the same physical box or set.
 - Reject/down-score if source and target readable product-type words conflict, such as spray vs shampoo, bottle vs retail box, lotion vs soap, or serum vs shampoo.
@@ -551,12 +552,12 @@ def product_reject_reasons(annotation: dict, args) -> list[str]:
     return reasons
 
 
-def target_drops_source_product_count(source: dict, target: dict) -> bool:
+def target_introduces_extra_product_count(source: dict, target: dict) -> bool:
     source_count = as_float(source.get("product_instance_count"), 1.0)
     target_count = as_float(target.get("product_instance_count"), 1.0)
-    if source_count <= 1:
-        return False
-    return target_count + 0.25 < source_count
+    if source_count <= 1.25:
+        return target_count > source_count + 0.75
+    return False
 
 
 def target_is_back_view(target: dict, pair: dict) -> bool:
@@ -969,7 +970,7 @@ def postprocess_annotation(annotation: dict, args) -> tuple[dict, list[dict]]:
             and not source_target_kind_conflict(source, target)
             and not target_introduces_outer_packaging(source, target, pair)
             and not target_drops_source_package_or_container(source, target, pair)
-            and not target_drops_source_product_count(source, target)
+            and not target_introduces_extra_product_count(source, target)
             and not presence_reasons
         )
 
@@ -1039,8 +1040,8 @@ def postprocess_annotation(annotation: dict, args) -> tuple[dict, list[dict]]:
             reasons.append("target_introduces_outer_packaging_not_in_source")
         if target_drops_source_package_or_container(source, target, pair):
             reasons.append("target_drops_source_package_or_container")
-        if target_drops_source_product_count(source, target):
-            reasons.append("target_drops_source_product_count")
+        if target_introduces_extra_product_count(source, target):
+            reasons.append("target_introduces_extra_product_count")
         reasons.extend(presence_reasons)
         reasons.extend(target_complexity_reasons(source, target, pair, args))
         if target_role in blocked_roles:
