@@ -32,15 +32,15 @@ Hard rules:
 - Select every high-value training pair from the chosen source, usually 1-6 if available. Do not chase coverage; skip borderline, redundant, or merely acceptable pairs.
 - The "pairs" array should contain only plausible training candidates. Do not add rejected pairs just to explain failures; describe bad targets in their image fields instead.
 - A valid target must contain the same complete source product object or source product set as real visible objects. Category does not matter: bottles, jars, boxes, bags, tools, devices, accessories, kits, and other products are all valid if the source product has useful logo/text/small-text identity to preserve.
-- It is OK if the source product is smaller, partly occluded, held by a person, surrounded by props, or accompanied by related products in the target. It is not OK if the source product object/set is absent, replaced by a different SKU, reduced to only a brand/logo/text panel, or only appears as printed packaging artwork.
+- It is OK if the source product is smaller, held by a person, surrounded by props, or accompanied by related products in the target. Partial occlusion is OK only when the complete source product object/set is still identifiable; do not accept targets where the source product is mostly hidden inside a pocket/container, reduced to tiny background branding, or visually dominated by unrelated usage context.
 - For every pair, explicitly verify the source product object/set inventory against the target. Same brand, same logo, same text, related products, or related contents do not count unless the actual source product object/set is visible in the target.
 - Do not set source_product_object_set_present_in_target=true when the target only shows a similar functional item with changed visible product color, material, package form, language/script, or text identity. A purple organizer becoming a black scrub pocket is not the same source product.
 - Example: if the source is a green retail soap box, a target that only shows matching soap bars, fragrance props, or brand text without that same green box must set source_product_object_set_present_in_target=false. If the target still shows the same green box plus soap bars/props, it can be true.
 - Example: if the source is a bottle/jar/tube and the target shows that same object held by a person, in a lifestyle scene, or inside an ad layout, it can be true even with hands, faces, props, or partial occlusion.
-- If the source shows multiple major saleable objects, for example box + bottle, kit + applicator, two bottles, bag + compartment, or device + accessory, the target may focus on one exact source object when that object remains complete and identity-safe. Do not reject only because a multi-object source becomes a one-object target.
+- If the source shows multiple major saleable objects, for example box + bottle, kit + applicator, two bottles, bag + compartment, or device + accessory, the target may focus on one exact source object when that object remains complete and identity-safe. Do not reject only because a multi-object source becomes a one-object target. But if the source is a boxed/gift/display set and the target keeps only loose internal contents while dropping the identity-bearing outer box/package, reject it.
 - If the source shows one major saleable product object, do not accept targets that introduce extra saleable products, related collection items, variants, or other SKUs around it. A one-product source becoming a multi-product catalog group is not a valid pair.
-- Do not accept package-form substitutions or additions: box-to-bottle, bottle-to-box, box-to-soap-bar-only, box-to-flat-lay-contents, jar-to-label, product-to-front-panel, adding an outer retail box that was not in the source, replacing the source SKU with only related collection/bundle/different SKU products, or targets where the product only appears as a printed picture on retail packaging.
-- Do not accept a clean front package/source image converted into a back/rear/side information panel with dense copy, even when it is the same physical box or set.
+- Do not accept package-form substitutions or additions: box-to-bottle, bottle-to-box, box-to-soap-bar-only, box-to-flat-lay-contents, jar-to-label, product-to-front-panel, adding an outer retail box that was not in the source, replacing the source SKU with only related collection/bundle/different SKU products, alternate package layouts, or targets where the product only appears as a printed picture on retail packaging.
+- Do not accept a clean front package/source image converted into a back/rear/side/interior information view with dense copy, ingredient/directions text, open compartments, or hidden front identity, even when it is the same physical object.
 - Reject/down-score if source and target readable product-type words conflict, such as spray vs shampoo, bottle vs retail box, lotion vs soap, or serum vs shampoo.
 - Reject/down-score target images where the source product object/set is missing, replaced, cropped out, back/rear view when source is front, dense side/back label view, a pure size chart/manual/ingredient panel, feature table, text-only infographic, swatch board, before-after-only panel, or complex multi-panel/product-grid comparison collage.
 - Reject/down-score clean sources that include external color swatches, shade strips, smear samples, or variant comparison samples outside the product itself.
@@ -812,10 +812,13 @@ def target_introduces_outer_packaging(source: dict, target: dict, pair: dict) ->
 
 def target_drops_source_package_or_container(source: dict, target: dict, pair: dict) -> bool:
     source_text = image_identity_text(source)
-    target_text = " ".join([
+    target_image_text = " ".join([
         image_identity_text(target),
         " ".join(flatten_text_values(target.get("detailed_description"))),
         " ".join(flatten_text_values(target.get("target_edit_description"))),
+    ])
+    target_text = " ".join([
+        target_image_text,
         " ".join(flatten_text_values(pair.get("pair_quality_judgement"))),
         " ".join(flatten_text_values(pair.get("pair_failure_modes"))),
         " ".join(flatten_text_values(pair.get("edit_instruction"))),
@@ -837,9 +840,96 @@ def target_drops_source_package_or_container(source: dict, target: dict, pair: d
         target_text,
         re.I,
     )
+    source_is_boxed_set = re.search(
+        r"\b(gift set|boxed set|box set|display set|retail gift box|window box|boxed collection)\b",
+        source_text,
+        re.I,
+    )
+    target_image_has_box = re.search(r"\b(box|boxed|package|packaging|retail pack|outer box|carton)\b", target_image_text, re.I)
+    target_image_shows_set_contents = (
+        as_bool(target.get("has_multiple_products"))
+        or as_float(target.get("product_instance_count"), 1.0) > 1.25
+        or re.search(r"\b(six|multiple|several|row of|lineup of)?\s*(bottles?|jars?|tubes?|items?)\b", target_image_text, re.I)
+    )
+    if source_is_boxed_set and target_image_shows_set_contents and not target_image_has_box:
+        return True
     return bool(source_has_box and not target_preserves_box and (
         target_drops_to_contents or (target_shows_loose_contents and not target_has_box)
     ))
+
+
+def target_loses_identity_surface(source: dict, target: dict, pair: dict) -> bool:
+    source_view = str(source.get("product_view") or "").lower()
+    target_view = str(target.get("product_view") or "").lower()
+    pair_view = str(pair.get("view_change") or "").lower()
+    target_text_density = str(target.get("text_density") or "").lower()
+    source_is_front = source_view in {"front", "angled_front", "unknown", ""}
+    if not source_is_front:
+        return False
+    text = " ".join(flatten_text_values([
+        target.get("detailed_description"),
+        target.get("product_identity_description"),
+        target.get("target_edit_description"),
+        pair.get("pair_quality_judgement"),
+        pair.get("pair_failure_modes"),
+        pair.get("product_text_match_notes"),
+    ]))
+    if target_view in {"inside", "interior"} or pair_view in {"front_to_inside", "front_to_interior"}:
+        return True
+    if re.search(
+        r"\b(alternate package layout|alternate packaging|different package layout|"
+        r"cleaner alternate package|changed package layout|replacement package layout|"
+        r"back label|rear label|reverse label|dense back copy|dense side copy|"
+        r"front identity (is )?(hidden|missing|not visible|obscured)|"
+        r"front label (is )?(hidden|missing|not visible|obscured)|"
+        r"tucked into|inserted into|inside (a )?(pocket|container|bag|scrub pocket)|"
+        r"mostly hidden|largely hidden|only (partly|partially) visible|open compartments?|interior view)\b",
+        text,
+        re.I,
+    ):
+        return True
+    if target_text_density == "high" and re.search(
+        r"\b(ingredient (label|panel|presentation)|directions? (label|panel|copy)|"
+        r"instruction (label|panel|copy)|back-of-pack|back of pack|dense ingredient copy)\b",
+        text,
+        re.I,
+    ):
+        return True
+    return False
+
+
+def target_missing_physical_product_object(source: dict, target: dict, pair: dict) -> bool:
+    target_role = str(target.get("role") or "").lower()
+    if target_role not in {"advertising_layout", "lifestyle", "infographic"}:
+        return False
+    source_text = image_identity_text(source)
+    source_is_physical = re.search(
+        r"\b(bottle|jar|tube|box|package|pack|bag|pouch|container|organizer|brush|comb|device|tool|kit|product)\b",
+        source_text,
+        re.I,
+    )
+    if not source_is_physical:
+        return False
+    target_text = " ".join(flatten_text_values([
+        target.get("detailed_description"),
+        target.get("product_identity_description"),
+        target.get("target_edit_description"),
+        target.get("visible_text_inventory"),
+        target.get("visible_text"),
+    ]))
+    has_physical_object = re.search(
+        r"\b(bottle|jar|tube|box|package|pack|bag|pouch|container|organizer|brush|comb|device|tool|kit|"
+        r"physical product|product object|front label|package front|product remains|same product)\b",
+        target_text,
+        re.I,
+    )
+    brand_or_usage_only = re.search(
+        r"\b(brand[- ]led|logo[- ]led|text[- ]only|benefit infographic|benefit list|"
+        r"face mask application|usage scene|surfer|surfing|underwater|marketing copy panel)\b",
+        target_text,
+        re.I,
+    )
+    return bool(brand_or_usage_only and not has_physical_object)
 
 
 def source_complexity_reasons(source: dict, args) -> list[str]:
@@ -981,6 +1071,8 @@ def postprocess_annotation(annotation: dict, args) -> tuple[dict, list[dict]]:
             and not source_target_kind_conflict(source, target)
             and not target_introduces_outer_packaging(source, target, pair)
             and not target_drops_source_package_or_container(source, target, pair)
+            and not target_loses_identity_surface(source, target, pair)
+            and not target_missing_physical_product_object(source, target, pair)
             and not target_introduces_extra_product_count(source, target)
             and not presence_reasons
         )
@@ -1051,6 +1143,10 @@ def postprocess_annotation(annotation: dict, args) -> tuple[dict, list[dict]]:
             reasons.append("target_introduces_outer_packaging_not_in_source")
         if target_drops_source_package_or_container(source, target, pair):
             reasons.append("target_drops_source_package_or_container")
+        if target_loses_identity_surface(source, target, pair):
+            reasons.append("target_loses_source_identity_surface")
+        if target_missing_physical_product_object(source, target, pair):
+            reasons.append("target_missing_physical_source_product_object")
         if target_introduces_extra_product_count(source, target):
             reasons.append("target_introduces_extra_product_count")
         reasons.extend(presence_reasons)
