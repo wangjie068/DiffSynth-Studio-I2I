@@ -589,7 +589,7 @@ def target_is_side_text_view(source: dict, target: dict, pair: dict) -> bool:
     pair_view = str(pair.get("view_change") or "").lower()
     target_text_density = str(target.get("text_density") or "").lower()
     source_is_front = source_view in {"front", "angled_front", "unknown", ""}
-    target_is_side = target_view == "side" or pair_view == "front_to_side"
+    target_mentions_dense_side = False
     descriptive_text = " ".join(
         str(value or "")
         for value in [
@@ -600,14 +600,21 @@ def target_is_side_text_view(source: dict, target: dict, pair: dict) -> bool:
             pair.get("pair_failure_modes"),
         ]
     )
-    if not source_is_front or not target_is_side:
-        return False
-    return target_text_density in {"medium", "high"} or bool(re.search(
-        r"\b(side text|side copy|side label|dense side|side becomes more visible|"
-        r"dense copy increases text[- ]preservation difficulty|dense package copy)\b",
+    target_mentions_dense_side = bool(re.search(
+        r"\b(side text|side copy|side label|side panel|side[- ]panel|dense side|"
+        r"side becomes more visible|dense copy increases text[- ]preservation difficulty|"
+        r"dense package copy|dense side[- ]panel|angled (box|package) .{0,40}(side|dense copy))\b",
         descriptive_text,
         re.I,
     ))
+    target_is_side = (
+        target_view == "side"
+        or pair_view == "front_to_side"
+        or (target_view == "angled_front" and target_mentions_dense_side)
+    )
+    if not source_is_front or not target_is_side:
+        return False
+    return target_text_density in {"medium", "high"} or target_mentions_dense_side
 
 
 def pair_declares_product_mismatch(pair: dict) -> bool:
@@ -878,7 +885,7 @@ def target_complexity_reasons(source: dict, target: dict, pair: dict, args) -> l
         reasons.append("target_has_multiple_product_views")
     if as_bool(target.get("has_color_or_variant_swatches")):
         reasons.append("target_has_color_or_variant_swatches")
-    if re.search(
+    if not pair_confirms_source_product_present(pair, args) and re.search(
         r"\b(multiple views?|multi[- ]?view|variant comparison|color comparison|"
         r"swatches?|swatch board|shade chart|color chart|product grid|several product views|"
         r"comparison chart)\b",
