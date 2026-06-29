@@ -171,22 +171,21 @@ def is_complex_target(record: dict, args) -> bool:
             pair.get("pair_quality_judgement"),
         ]
     )
-    if str(target_label.get("layout_type") or "").lower() in {"multi_panel", "collage"}:
+    if str(target_label.get("layout_type") or "").lower() == "multi_panel":
         if str(target_label.get("layout_type") or "").lower() == "multi_panel":
             return bool(re.search(
-                r"\b(collage|multiple views?|multi[- ]?view|variant comparison|color comparison|"
+                r"\b(multiple views?|multi[- ]?view|variant comparison|color comparison|"
                 r"swatches?|swatch board|shade chart|color chart|product grid|several product views|"
                 r"comparison chart)\b",
                 descriptive_text,
                 re.I,
             ))
-        return True
     if target_label.get("has_multiple_product_views"):
         return True
     if target_label.get("has_color_or_variant_swatches"):
         return True
     return bool(re.search(
-        r"\b(collage|multiple views?|multi[- ]?view|variant comparison|color comparison|"
+        r"\b(multiple views?|multi[- ]?view|variant comparison|color comparison|"
         r"swatches?|swatch board|shade chart|color chart|product grid|several product views|"
         r"comparison chart|text[- ]only infographic|feature table|"
         r"specification table|ingredient panel|size chart|instruction manual|label[- ]only|"

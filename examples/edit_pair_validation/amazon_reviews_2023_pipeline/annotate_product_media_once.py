@@ -34,10 +34,12 @@ Hard rules:
 - A valid target must contain the same complete source product object or source product set as real visible objects. Category does not matter: bottles, jars, boxes, bags, tools, devices, accessories, kits, and other products are all valid if the source product has useful logo/text/small-text identity to preserve.
 - It is OK if the source product is smaller, partly occluded, held by a person, surrounded by props, or accompanied by related products in the target. It is not OK if the source product object/set is absent, replaced by a different SKU, reduced to only a brand/logo/text panel, or only appears as printed packaging artwork.
 - For every pair, explicitly verify the source product object/set inventory against the target. Same brand, same logo, same text, related products, or related contents do not count unless the actual source product object/set is visible in the target.
+- Do not set source_product_object_set_present_in_target=true when the target only shows a similar functional item with changed visible product color, material, package form, language/script, or text identity. A purple organizer becoming a black scrub pocket is not the same source product.
 - Example: if the source is a green retail soap box, a target that only shows matching soap bars, fragrance props, or brand text without that same green box must set source_product_object_set_present_in_target=false. If the target still shows the same green box plus soap bars/props, it can be true.
 - Example: if the source is a bottle/jar/tube and the target shows that same object held by a person, in a lifestyle scene, or inside an ad layout, it can be true even with hands, faces, props, or partial occlusion.
 - If the source shows multiple major saleable objects, for example box + bottle, kit + applicator, two bottles, bag + compartment, or device + accessory, the target must preserve those same major objects unless the model explicitly marks the source extra object as a non-saleable prop. Do not accept targets that keep only one source component.
 - Do not accept package-form substitutions or additions: box-to-bottle, bottle-to-box, box-to-soap-bar-only, box-to-flat-lay-contents, jar-to-label, product-to-front-panel, adding an outer retail box that was not in the source, replacing the source SKU with only related collection/bundle/different SKU products, or targets where the product only appears as a printed picture on retail packaging.
+- Do not accept a clean front package/source image converted into a back/rear/side information panel with dense copy, even when it is the same physical box or set.
 - Reject/down-score if source and target readable product-type words conflict, such as spray vs shampoo, bottle vs retail box, lotion vs soap, or serum vs shampoo.
 - Reject/down-score target images where the source product object/set is missing, replaced, cropped out, back/rear view when source is front, dense side/back label view, a pure size chart/manual/ingredient panel, feature table, text-only infographic, swatch board, before-after-only panel, or complex multi-panel/product-grid comparison collage.
 - Reject/down-score clean sources that include external color swatches, shade strips, smear samples, or variant comparison samples outside the product itself.
@@ -48,6 +50,7 @@ Hard rules:
 - Preserve brand/logo, front label, package shape, color, cap/pump/tube geometry, and useful small text.
 - Prefer controlled transformations that improve aesthetics: clean ad layout, polished lifestyle scene, better lighting/background, or controlled angle change. A high transformation is valid only when the same complete source product object/set remains identifiable and identity-safe.
 - Small text means fine label/capacity/ingredient/warning text, dense package copy, small ad callouts, and icon labels. OCR best-effort; use "[unreadable]" instead of inventing text.
+- Keep OCR/transcriptions in the exact visible script and language. Do not translate Chinese, Japanese, Korean, German, French, or other non-English text into English.
 
 Text and description rules:
 - Image descriptions should be specific but compact: product count, view, placement, background, visible text, logo/small-text evidence, and risks.
@@ -809,8 +812,8 @@ def target_drops_source_package_or_container(source: dict, target: dict, pair: d
     source_has_box = re.search(r"\b(box|boxed|retail pack|outer package|outer box|carton)\b", source_text, re.I)
     target_preserves_box = re.search(r"\b(same|full|complete|preserve[sd]?|keeps?) .{0,25}\b(box|package|packaging|carton)\b", target_text, re.I)
     target_drops_to_contents = re.search(
-        r"\b(box[- ]to[- ]((soap[- ])?bar|bottle|jar|tube|container|product[- ]only)|"
-        r"box .{0,40} into .{0,40}(soap bars?|bars?|flat[- ]?lay|contents|bottle[- ]only|jar[- ]only|tube[- ]only|single bottle|single jar)|"
+        r"\b(box[- ]to[- ]((soap[- ])?bar|bath bombs?|bottle|jar|tube|container|product[- ]only)|"
+        r"box .{0,40} into .{0,40}(soap bars?|bars?|bath bombs?|flat[- ]?lay|contents|bottle[- ]only|jar[- ]only|tube[- ]only|single bottle|single jar)|"
         r"target drops? .{0,20}(box|package|packaging)|package is absent|"
         r"drops? the box|bar[- ]only|soap[- ]bar[- ]only|shifts? to bar[- ]only)\b",
         target_text,
@@ -818,7 +821,7 @@ def target_drops_source_package_or_container(source: dict, target: dict, pair: d
     )
     target_has_box = re.search(r"\b(box|boxed|package|packaging|retail pack|outer box|carton)\b", target_text, re.I)
     target_shows_loose_contents = re.search(
-        r"\b(soap bars?|beauty bars?|loose contents?|individual items?|flat[- ]?lay|unboxed contents?)\b",
+        r"\b(soap bars?|beauty bars?|bath bombs?|loose contents?|individual items?|flat[- ]?lay|unboxed contents?)\b",
         target_text,
         re.I,
     )
@@ -868,14 +871,14 @@ def target_complexity_reasons(source: dict, target: dict, pair: dict, args) -> l
     )
     if not args.allow_infographic_pairs and pair_type == "main_to_infographic":
         reasons.append("blocked_pair_type:main_to_infographic")
-    if layout_type == "collage":
+    if layout_type == "collage" and not pair_confirms_source_product_present(pair, args):
         reasons.append(f"blocked_target_layout:{layout_type}")
     if as_bool(target.get("has_multiple_product_views")):
         reasons.append("target_has_multiple_product_views")
     if as_bool(target.get("has_color_or_variant_swatches")):
         reasons.append("target_has_color_or_variant_swatches")
     if re.search(
-        r"\b(collage|multiple views?|multi[- ]?view|variant comparison|color comparison|"
+        r"\b(multiple views?|multi[- ]?view|variant comparison|color comparison|"
         r"swatches?|swatch board|shade chart|color chart|product grid|several product views|"
         r"comparison chart)\b",
         descriptive_text,
