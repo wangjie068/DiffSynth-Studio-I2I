@@ -44,6 +44,10 @@ Hard rules:
 - Reject/down-score if source and target readable product-type words conflict, such as spray vs shampoo, bottle vs retail box, lotion vs soap, or serum vs shampoo.
 - Reject/down-score target images where the source product object/set is missing, replaced, cropped out, back/rear view when source is front, dense side/back label view, a pure size chart/manual/ingredient panel, feature table, text-only infographic, swatch board, before-after-only panel, or complex multi-panel/product-grid comparison collage.
 - Reject/down-score clean sources that include external color swatches, shade strips, smear samples, or variant comparison samples outside the product itself.
+- Reject/down-score complex kit/grid sources with many saleable items, nail color sample tips, shade samples, swatch sticks, lamps/tools/accessory grids, or "kit includes" inventory layouts. These are usually too ambiguous for high-value pair training.
+- Reject targets that turn the source into a how-to/tutorial/step-by-step/multi-panel usage collage, even when the product appears.
+- Reject alternate package layouts or package redesigns. Same brand/category is not enough if the visible retail package/front design changes.
+- Reject bundle flat-lay/list targets that reorganize a complex kit, add a component list, or change the shown kit inventory/package identity.
 - Do not reject a polished one-panel ad/lifestyle/infographic target only because it has headlines, benefit bullets, icon labels, ingredient props, rich styling, or a repeated copy of the same exact product, as long as the exact same source product object/set remains identifiable in the target.
 - Reject/down-score side/back/rear packaging views with dense side-panel text when the source is a front package view.
 - Reject/down-score if the target appears to be a different product type, brand, formula, SKU, package, or visible product text, even if colors or category look similar.
@@ -629,6 +633,8 @@ def pair_declares_product_mismatch(pair: dict) -> bool:
         return False
     return bool(re.search(
         r"\b(different sku|different product|different formula|different item|different package|"
+        r"alternate package|alternate front package|alternate front packaging|alternate retail package|"
+        r"clean alternate front packaging|different front packaging|different visible package|"
         r"different variant|within the same bundle|same[- ]brand same[- ]line|same brand same line|"
         r"same[- ]brand pair|same line pair|same brand and compatible|compatible beauty line|"
         r"not an exact product match|different visible product text|product text mismatch)\b",
@@ -878,7 +884,9 @@ def target_loses_identity_surface(source: dict, target: dict, pair: dict) -> boo
         return True
     if re.search(
         r"\b(alternate package layout|alternate packaging|different package layout|"
-        r"cleaner alternate package|changed package layout|replacement package layout|"
+        r"alternate package|alternate front package|alternate front packaging|alternate retail package|"
+        r"clean alternate front packaging|cleaner alternate package|changed package layout|"
+        r"different front packaging|different visible package|package redesign|replacement package layout|"
         r"back label|rear label|reverse label|dense back copy|dense side copy|"
         r"front identity (is )?(hidden|missing|not visible|obscured)|"
         r"front label (is )?(hidden|missing|not visible|obscured)|"
@@ -952,6 +960,15 @@ def source_complexity_reasons(source: dict, args) -> list[str]:
         reasons.append("source_has_color_or_variant_swatches")
     if re.search(r"\b(color|shade|variant)?\s*(swatches?|smears?|streaks?|sample strips?)\b", descriptive_text, re.I):
         reasons.append("source_has_external_swatch_samples")
+    if re.search(
+        r"\b(starter kit|all[- ]in[- ]one kit|full kit|kit includes|nail kit|manicure kit|"
+        r"nail color tips?|color sample tips?|sample nails?|shade samples?|swatch sticks?|"
+        r"nail lamp|led nail lamp|manicure tools?|accessory grid|tools? and accessories|"
+        r"many (bottles|tubes|items|accessories)|large kit|product grid|component grid)\b",
+        descriptive_text,
+        re.I,
+    ):
+        reasons.append("source_complex_kit_or_swatch_set")
     return reasons
 
 
@@ -969,6 +986,7 @@ def target_complexity_reasons(source: dict, target: dict, pair: dict, args) -> l
             pair.get("edit_instruction"),
             pair.get("edit_instruction_detailed"),
             pair.get("pair_quality_judgement"),
+            pair.get("pair_failure_modes"),
         ]
     )
     if not args.allow_infographic_pairs and pair_type == "main_to_infographic":
@@ -995,6 +1013,30 @@ def target_complexity_reasons(source: dict, target: dict, pair: dict, args) -> l
         re.I,
     ):
         reasons.append("target_text_or_label_only_layout")
+    if re.search(
+        r"\b(how[- ]to|how to|step[- ]by[- ]step|step\s*[1-9]|instructional collage|"
+        r"tutorial|usage collage|application steps?|four[- ]panel|multi[- ]panel how[- ]to|"
+        r"use across panels|before and after steps?)\b",
+        descriptive_text,
+        re.I,
+    ):
+        reasons.append("target_instructional_or_step_collage")
+    if re.search(
+        r"\b(all[- ]in[- ]one[- ]kit includes|all[- ]in[- ]one kit includes|kit includes|"
+        r"bundle includes|content list|component list|accessory list|inventory list|"
+        r"list of included items|included accessories)\b",
+        descriptive_text,
+        re.I,
+    ):
+        reasons.append("target_component_list_or_bundle_layout")
+    if re.search(
+        r"\b(alternate package layout|alternate package|alternate front package|"
+        r"alternate front packaging|clean alternate front packaging|different front packaging|"
+        r"different visible package|package redesign|replacement package layout)\b",
+        descriptive_text,
+        re.I,
+    ):
+        reasons.append("target_alternate_package_layout")
     return reasons
 
 
