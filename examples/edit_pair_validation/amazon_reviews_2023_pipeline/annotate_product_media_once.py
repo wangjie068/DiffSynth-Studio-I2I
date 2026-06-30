@@ -46,7 +46,9 @@ Hard rules:
 - Reject/down-score clean sources that include external color swatches, shade strips, smear samples, or variant comparison samples outside the product itself.
 - Reject/down-score complex kit/grid sources with many saleable items, nail color sample tips, shade samples, swatch sticks, lamps/tools/accessory grids, or "kit includes" inventory layouts. These are usually too ambiguous for high-value pair training.
 - Reject targets that turn the source into a how-to/tutorial/step-by-step/multi-panel usage collage, even when the product appears.
+- Reject split-scene or multi-scene lifestyle targets where the product is mainly shown in use rather than as the same complete package/object presentation.
 - Reject alternate package layouts or package redesigns. Same brand/category is not enough if the visible retail package/front design changes.
+- Reject source-to-target state changes that expose a different product surface, for example a closed bag/organizer becoming an open interior/compartment view.
 - Reject bundle flat-lay/list targets that reorganize a complex kit, add a component list, or change the shown kit inventory/package identity.
 - Do not reject a polished one-panel ad/lifestyle/infographic target only because it has headlines, benefit bullets, icon labels, ingredient props, rich styling, or a repeated copy of the same exact product, as long as the exact same source product object/set remains identifiable in the target.
 - Reject/down-score side/back/rear packaging views with dense side-panel text when the source is a front package view.
@@ -806,13 +808,19 @@ def target_introduces_outer_packaging(source: dict, target: dict, pair: dict) ->
         " ".join(flatten_text_values(pair.get("edit_instruction_detailed"))),
     ])
     source_has_box = re.search(r"\b(box|boxed|retail pack|outer package|outer box|carton)\b", source_text, re.I)
+    source_has_bottle_or_tube = re.search(r"\b(bottle|tube|jar|spray|perfume|cologne|fragrance)\b", source_text, re.I)
     target_has_added_box = re.search(
         r"\b(matching box|outer box|retail box|boxed retail|retail pack|"
         r"plus (a )?(matching )?(box|outer box|retail box)|adds? (a )?(box|outer box|retail box)|"
-        r"with (a )?(matching )?(box|outer box|retail box))\b",
+        r"with (a )?(matching )?(box|outer box|retail box)|"
+        r"same .{0,40}box|box centered|package box|retail package)\b",
         target_text,
         re.I,
     )
+    if source_has_bottle_or_tube and target_has_added_box and not source_has_box:
+        target_keeps_source_object = re.search(r"\b(same|exact|source) .{0,30}\b(bottle|tube|jar|spray|perfume|cologne|fragrance)\b", target_text, re.I)
+        if not target_keeps_source_object:
+            return True
     return bool(target_has_added_box and not source_has_box)
 
 
@@ -891,7 +899,8 @@ def target_loses_identity_surface(source: dict, target: dict, pair: dict) -> boo
         r"front identity (is )?(hidden|missing|not visible|obscured)|"
         r"front label (is )?(hidden|missing|not visible|obscured)|"
         r"tucked into|inserted into|inside (a )?(pocket|container|bag|scrub pocket)|"
-        r"mostly hidden|largely hidden|only (partly|partially) visible|open compartments?|interior view)\b",
+        r"mostly hidden|largely hidden|only (partly|partially) visible|open compartments?|"
+        r"open (bag|organizer|interior|compartment|pouch)|same bag open|interior view)\b",
         text,
         re.I,
     ):
@@ -1016,7 +1025,8 @@ def target_complexity_reasons(source: dict, target: dict, pair: dict, args) -> l
     if re.search(
         r"\b(how[- ]to|how to|step[- ]by[- ]step|step\s*[1-9]|instructional collage|"
         r"tutorial|usage collage|application steps?|four[- ]panel|multi[- ]panel how[- ]to|"
-        r"use across panels|before and after steps?)\b",
+        r"two[- ]panel|two[- ]scene|split[- ]scene|multi[- ]scene|"
+        r"use across panels|before and after steps?|shown in realistic usage scenes)\b",
         descriptive_text,
         re.I,
     ):
@@ -1029,6 +1039,13 @@ def target_complexity_reasons(source: dict, target: dict, pair: dict, args) -> l
         re.I,
     ):
         reasons.append("target_component_list_or_bundle_layout")
+    if re.search(
+        r"\b(stacked display|complex stacked display|drawer display|gold[- ]drawer display|"
+        r"display drawers?|more complex stacked|stacked gold)\b",
+        descriptive_text,
+        re.I,
+    ):
+        reasons.append("target_complex_stacked_display")
     if re.search(
         r"\b(alternate package layout|alternate package|alternate front package|"
         r"alternate front packaging|clean alternate front packaging|different front packaging|"
