@@ -41,15 +41,16 @@ Hard rules:
 - If the source shows one major saleable product object, do not accept targets that introduce extra saleable products, related collection items, variants, or other SKUs around it. A one-product source becoming a multi-product catalog group is not a valid pair.
 - Do not accept package-form substitutions or additions: box-to-bottle, bottle-to-box, box-to-jar-only, retail-card/blister-to-jar-only, box-to-soap-bar-only, box-to-flat-lay-contents, jar-to-label, product-to-front-panel, adding an outer retail box that was not in the source, replacing the source SKU with only related collection/bundle/different SKU products, alternate package layouts, or targets where the product only appears as a printed picture on retail packaging.
 - Do not accept a clean front package/source image converted into a back/rear/side/interior information view with dense copy, ingredient/directions text, quality-promise panels, open compartments, or hidden front identity, even when it is the same physical object.
+- If the source is mainly a front box/card/blister/package, a target that keeps only the inner bottle/jar/tube without the source package is invalid. If the source includes a real separate bottle/jar/tube next to the package, that exact object can be a valid target.
+- Do not count small lifestyle/use-case thumbnails, circular people/season badges, or decorative callout photos as multiple product views. Set has_multiple_product_views only when the saleable product itself is repeated in alternate views, grids, or comparison layouts.
 - Reject/down-score if source and target readable product-type words conflict, such as spray vs shampoo, bottle vs retail box, lotion vs soap, or serum vs shampoo.
 - Reject/down-score target images where the source product object/set is missing, replaced, cropped out, back/rear view when source is front, dense side/back label view, a pure size chart/manual/ingredient panel, feature table, text-only infographic, swatch board, before-after-only panel, or complex multi-panel/product-grid comparison collage.
 - Reject/down-score clean sources that include external color swatches, shade strips, smear samples, or variant comparison samples outside the product itself.
 - Reject/down-score complex kit/grid sources with many saleable items, nail color sample tips, shade samples, swatch sticks, lamps/tools/accessory grids, or "kit includes" inventory layouts. These are usually too ambiguous for high-value pair training.
-- Reject targets that turn the source into a how-to/tutorial/step-by-step/multi-panel usage collage, even when the product appears.
-- Reject split-scene or multi-scene lifestyle targets where the product is mainly shown in use rather than as the same complete package/object presentation.
-- Reject alternate package layouts or package redesigns. Same brand/category is not enough if the visible retail package/front design changes.
-- Reject source-to-target state changes that expose a different product surface, for example a closed bag/organizer becoming an open interior/compartment view.
-- Reject bundle flat-lay/list targets that reorganize a complex kit, add a component list, or change the shown kit inventory/package identity.
+- Reject how-to/tutorial/step-by-step/multi-panel/split-scene targets only when the complete source product object/set is missing, mostly hidden, shown only as a tiny/printed/background reference, or changed into a different product/package surface. Do not reject a controlled ad/infographic solely because it has benefit text, props, thumbnails, or a one-panel graphic layout.
+- Reject alternate package layouts or package redesigns when the visible source package/object identity changes. Same brand/category is not enough if the retail package/front design changes.
+- Reject source-to-target state changes that expose a different product surface, for example a closed bag/organizer becoming an open interior/compartment view, or a front product becoming a back/side dense-label information view.
+- Reject bundle flat-lay/list targets that add/remove saleable items, change kit inventory, or drop an identity-bearing source package. Accept a closed gift/set package becoming an open package only when the same complete inventory and package identity remain visible.
 - Do not reject a polished one-panel ad/lifestyle/infographic target only because it has headlines, benefit bullets, icon labels, ingredient props, rich styling, or a repeated copy of the same exact product, as long as the exact same source product object/set remains identifiable in the target.
 - Reject/down-score side/back/rear packaging views with dense side-panel text when the source is a front package view.
 - Reject/down-score if the target appears to be a different product type, brand, formula, SKU, package, or visible product text, even if colors or category look similar.
@@ -558,10 +559,23 @@ def product_reject_reasons(annotation: dict, args) -> list[str]:
     return reasons
 
 
-def target_introduces_extra_product_count(source: dict, target: dict) -> bool:
+def target_introduces_extra_product_count(source: dict, target: dict, pair: Optional[dict] = None) -> bool:
     source_count = as_float(source.get("product_instance_count"), 1.0)
     target_count = as_float(target.get("product_instance_count"), 1.0)
     if source_count <= 1.25:
+        source_text = image_identity_text(source)
+        pair_text = " ".join(flatten_text_values([
+            (pair or {}).get("pair_quality_judgement"),
+            (pair or {}).get("edit_instruction"),
+            (pair or {}).get("edit_instruction_detailed"),
+        ]))
+        if re.search(r"\b(gift box|gift set|box set|boxed set|kit|set|bath bombs?)\b", source_text, re.I) and re.search(
+            r"\b(same (set|kit|inventory|contents)|full (set|kit|inventory)|all (six|[0-9]+)|"
+            r"open[- ]box presentation|contents? visible)\b",
+            pair_text,
+            re.I,
+        ):
+            return False
         return target_count > source_count + 0.75
     return False
 
@@ -579,14 +593,50 @@ def target_is_back_view(target: dict, pair: dict) -> bool:
             target.get("detailed_description"),
             target.get("product_identity_description"),
             target.get("target_edit_description"),
+            pair.get("pair_quality_judgement"),
+            pair.get("pair_failure_modes"),
+            pair.get("edit_instruction"),
+            pair.get("edit_instruction_detailed"),
         ]
     )
     return bool(re.search(
         r"\b(side/back|back[- ]?(view|label|panel|side|facing|copy)|rear[- ]?(view|label|panel)|"
-        r"reverse[- ]?(view|side)|dense (back|rear) (label|copy|text)|full back label)\b",
+        r"reverse[- ]?(view|side)|dense (back|rear) (label|copy|text)|full back label|"
+        r"(barcode|ingredients?|directions?) .{0,35}(back|rear|side|label|copy|panel)|"
+        r"(back|rear|side) .{0,35}(barcode|ingredients?|directions?))\b",
         descriptive_text,
         re.I,
     ))
+
+
+def dense_back_or_side_label_signal_count(text: str) -> int:
+    patterns = [
+        r"\bbar\s*code\b|\bbarcode\b",
+        r"\bdirections?\b|\binstructions?\b|\bhow to use\b",
+        r"\bingredients?\b|\bactive ingredients?\b|\bdrug facts\b",
+        r"\bwarning\b|\bcaution\b|\bkeep out of reach\b",
+        r"\bdistributed by\b|\bmanufactured by\b|\bmade in\b|\baddress\b",
+        r"\bbatch\b|\blot\b|\bexpiry\b|\bexpires?\b",
+        r"\brecyclable\b|\brecycling\b|\bnet wt\b|\bnet weight\b",
+    ]
+    return sum(1 for pattern in patterns if re.search(pattern, text, re.I))
+
+
+def target_has_dense_back_or_side_label_text(target: dict, pair: dict) -> bool:
+    target_view = str(target.get("product_view") or "").lower()
+    pair_view = str(pair.get("view_change") or "").lower()
+    target_text_density = str(target.get("text_density") or "").lower()
+    target_text = image_identity_text(target)
+    if not target_text:
+        return False
+    signals = dense_back_or_side_label_signal_count(target_text)
+    if signals < 2:
+        return False
+    if target_view in {"back", "rear", "reverse", "side"}:
+        return True
+    if pair_view in {"front_to_back", "front_to_rear", "front_to_reverse", "front_to_side"}:
+        return True
+    return target_text_density == "high"
 
 
 def target_is_side_text_view(source: dict, target: dict, pair: dict) -> bool:
@@ -604,12 +654,16 @@ def target_is_side_text_view(source: dict, target: dict, pair: dict) -> bool:
             target.get("target_edit_description"),
             pair.get("pair_quality_judgement"),
             pair.get("pair_failure_modes"),
+            pair.get("edit_instruction"),
+            pair.get("edit_instruction_detailed"),
         ]
     )
     target_mentions_dense_side = bool(re.search(
         r"\b(side text|side copy|side label|side panel|side[- ]panel|dense side|"
         r"side becomes more visible|dense copy increases text[- ]preservation difficulty|"
         r"dense package copy|dense side[- ]panel|angled (box|package) .{0,40}(side|dense copy)|"
+        r"side text can appear|barcode .{0,35}(side|label|copy|panel)|"
+        r"(ingredients?|directions?) .{0,35}(side|back|rear|label|copy|panel)|"
         r"brand name partially visible on (the )?right edge|front (label|identity|branding).{0,40}"
         r"(hidden|replaced|turned away|missing|less visible))\b",
         descriptive_text,
@@ -789,9 +843,66 @@ def pair_confirms_source_product_present(pair: dict, args) -> bool:
     return not meaningful_missing_components(pair.get("source_product_missing_components"))
 
 
-def source_target_kind_conflict(source: dict, target: dict) -> bool:
-    source_terms = product_kind_terms(image_identity_text(source))
-    target_terms = product_kind_terms(image_identity_text(target))
+def pair_claims_same_source_product(pair: dict) -> bool:
+    if not as_bool(pair.get("source_product_object_set_present_in_target")):
+        return False
+    confidence = pair.get("source_product_presence_confidence")
+    if confidence is not None and as_float(confidence, 0.0) < 0.9:
+        return False
+    if meaningful_missing_components(pair.get("source_product_missing_components")):
+        return False
+    text = " ".join(flatten_text_values([
+        pair.get("pair_quality_judgement"),
+        pair.get("pair_failure_modes"),
+        pair.get("product_text_match_notes"),
+        pair.get("edit_instruction"),
+        pair.get("edit_instruction_detailed"),
+        pair.get("preservation_requirements"),
+    ]))
+    return bool(re.search(
+        r"\b(same exact|exact same|same source|source product|same product|exact product|"
+        r"same bottle|same jar|same tube|same box|same package|same kit|same set|"
+        r"product remains|identity intact|fully visible|source .{0,25}preserved|"
+        r"preserv(e|ed|ing).{0,35}(product|bottle|jar|tube|box|package|kit|set))\b",
+        text,
+        re.I,
+    ))
+
+
+def target_has_blocked_multiple_product_views(target: dict, pair: dict) -> bool:
+    if not as_bool(target.get("has_multiple_product_views")):
+        return False
+    text = " ".join(flatten_text_values([
+        target.get("detailed_description"),
+        target.get("target_edit_description"),
+        target.get("product_identity_description"),
+        pair.get("pair_quality_judgement"),
+        pair.get("pair_failure_modes"),
+        pair.get("edit_instruction"),
+        pair.get("edit_instruction_detailed"),
+    ]))
+    use_case_thumbnails = re.search(
+        r"\b(use[- ]case|usage[- ]case|seasonal|party|christmas|halloween|circle thumbnails?|"
+        r"circular (use|season|people|lifestyle)|people thumbnails?|face thumbnails?|"
+        r"lifestyle thumbnails?|extra circles?|small circular photos?)\b",
+        text,
+        re.I,
+    )
+    actual_product_views = re.search(
+        r"\b(multiple product views?|several product views?|alternate product views?|"
+        r"front and back|front/back|back and front|multi[- ]?view product|"
+        r"product grid|comparison grid|variant grid|same product repeated as views?)\b",
+        text,
+        re.I,
+    )
+    if pair_claims_same_source_product(pair) and use_case_thumbnails and not actual_product_views:
+        return False
+    return True
+
+
+def source_target_kind_conflict(source: dict, target: dict, pair: Optional[dict] = None) -> bool:
+    source_terms = product_kind_terms(image_visible_identity_text(source) or image_identity_text(source))
+    target_terms = product_kind_terms(image_visible_identity_text(target) or image_identity_text(target))
     if not source_terms or not target_terms:
         return False
     generic_terms = {"oil"}
@@ -854,8 +965,10 @@ def target_drops_source_package_or_container(source: dict, target: dict, pair: d
         source_text,
         re.I,
     )
+    source_count = as_float(source.get("product_instance_count"), 1.0)
     source_package_is_primary = bool(source_has_box and (
-        not source_has_inner_product
+        source_count <= 1.25
+        or not source_has_inner_product
         or re.search(
             r"\b(front|main|clean|identity[- ]bearing|retail|carded|blister|package|packaging) .{0,35}"
             r"(box|package|packaging|retail card|carded package|hanging card|product card|blister|blister pack)|"
@@ -881,15 +994,27 @@ def target_drops_source_package_or_container(source: dict, target: dict, pair: d
         r"target drops? .{0,20}(box|package|packaging)|package is absent|"
         r"drops? the (box|package|packaging|card|blister)|"
         r"bar[- ]only|soap[- ]bar[- ]only|shifts? to bar[- ]only|"
-        r"(standalone|isolated|clean isolated) (jar|pot|bottle|tube) (closeup|detail|shot|render))\b",
+        r"(standalone|isolated|clean isolated|clean front|matching) (jar|pot|bottle|tube) "
+        r"(closeup|detail|shot|render|view|product image|studio product image)|"
+        r"(standalone|isolated|clean isolated) .{0,90}(jar|pot|bottle|tube) "
+        r"(closeup|detail|shot|render|view|product image|studio product image)|"
+        r"(standalone|isolated|clean isolated) studio image of .{0,90}(jar|pot|bottle|tube))\b",
         target_text,
         re.I,
     )
-    target_has_box = re.search(
+    target_image_has_box = re.search(
         r"\b(box|boxed|package|packaging|retail pack|outer box|carton|retail card|carded package|blister|blister pack)\b",
+        target_image_text,
+        re.I,
+    )
+    target_mentions_only_inner_product = re.search(
+        r"\b(bottle|jar|pot|tube|container|inner product|product[- ]only|bottle[- ]only|"
+        r"jar[- ]only|tube[- ]only|standalone|isolated|studio product image)\b",
         target_text,
         re.I,
     )
+    if source_package_is_primary and source_count <= 1.25 and not target_image_has_box and target_mentions_only_inner_product:
+        return True
     target_shows_loose_contents = re.search(
         r"\b(soap bars?|beauty bars?|bath bombs?|loose contents?|individual items?|flat[- ]?lay|unboxed contents?)\b",
         target_text,
@@ -900,11 +1025,6 @@ def target_drops_source_package_or_container(source: dict, target: dict, pair: d
         source_text,
         re.I,
     )
-    target_image_has_box = re.search(
-        r"\b(box|boxed|package|packaging|retail pack|outer box|carton|retail card|carded package|blister|blister pack)\b",
-        target_image_text,
-        re.I,
-    )
     target_image_shows_set_contents = (
         as_bool(target.get("has_multiple_products"))
         or as_float(target.get("product_instance_count"), 1.0) > 1.25
@@ -913,7 +1033,7 @@ def target_drops_source_package_or_container(source: dict, target: dict, pair: d
     if source_is_boxed_set and target_image_shows_set_contents and not target_image_has_box:
         return True
     return bool(source_package_is_primary and not target_preserves_box and (
-        target_drops_to_contents or (target_shows_loose_contents and not target_has_box)
+        target_drops_to_contents or (target_shows_loose_contents and not target_image_has_box)
     ))
 
 
@@ -925,6 +1045,8 @@ def target_loses_identity_surface(source: dict, target: dict, pair: dict) -> boo
     source_is_front = source_view in {"front", "angled_front", "unknown", ""}
     if not source_is_front:
         return False
+    if target_has_dense_back_or_side_label_text(target, pair):
+        return True
     text = " ".join(flatten_text_values([
         target.get("detailed_description"),
         target.get("product_identity_description"),
@@ -953,6 +1075,21 @@ def target_loses_identity_surface(source: dict, target: dict, pair: dict) -> boo
         r"(bag|organizer|pouch|toiletry bag).{0,60}sits flat on counter|"
         r"sits flat on counter.{0,60}(bag|organizer|pouch|toiletry bag)|"
         r"counter lifestyle scene with .{0,40}open)\b",
+        text,
+        re.I,
+    ):
+        if pair_claims_same_source_product(pair) and not re.search(
+            r"\b(different|changed|redesign|replacement|back label|rear label|reverse label|"
+            r"dense back copy|dense side copy|tucked into|inserted into|inside|open(ed)?|interior)\b",
+            text,
+            re.I,
+        ):
+            return False
+        return True
+    if re.search(
+        r"\b(side text can appear|barcode .{0,35}(side|back|rear|label|copy|panel)|"
+        r"(side|back|rear) .{0,35}(barcode|ingredients?|directions?)|"
+        r"(ingredients?|directions?) .{0,35}(side|back|rear|label|copy|panel))\b",
         text,
         re.I,
     ):
@@ -1040,6 +1177,7 @@ def target_complexity_reasons(source: dict, target: dict, pair: dict, args) -> l
     layout_type = str(target.get("layout_type") or "").lower()
     layout_complexity = str(target.get("layout_complexity") or "").lower()
     pair_type = str(pair.get("pair_type") or "").lower()
+    source_present = pair_confirms_source_product_present(pair, args)
     descriptive_text = " ".join(
         str(value or "")
         for value in [
@@ -1054,13 +1192,13 @@ def target_complexity_reasons(source: dict, target: dict, pair: dict, args) -> l
     )
     if not args.allow_infographic_pairs and pair_type == "main_to_infographic":
         reasons.append("blocked_pair_type:main_to_infographic")
-    if layout_type == "collage" and not pair_confirms_source_product_present(pair, args):
+    if layout_type == "collage" and not source_present:
         reasons.append(f"blocked_target_layout:{layout_type}")
-    if as_bool(target.get("has_multiple_product_views")):
+    if target_has_blocked_multiple_product_views(target, pair):
         reasons.append("target_has_multiple_product_views")
     if as_bool(target.get("has_color_or_variant_swatches")):
         reasons.append("target_has_color_or_variant_swatches")
-    if not pair_confirms_source_product_present(pair, args) and re.search(
+    if not source_present and re.search(
         r"\b(multiple views?|multi[- ]?view|variant comparison|color comparison|"
         r"swatches?|swatch board|shade chart|color chart|product grid|several product views|"
         r"comparison chart)\b",
@@ -1068,7 +1206,7 @@ def target_complexity_reasons(source: dict, target: dict, pair: dict, args) -> l
         re.I,
     ):
         reasons.append("target_complex_collage_or_variant_layout")
-    if not pair_confirms_source_product_present(pair, args) and re.search(
+    if not source_present and re.search(
         r"\b(text[- ]only infographic|feature table|specification table|ingredient panel|size chart|"
         r"instruction manual|label[- ]only|no physical product|"
         r"product only appears as (a )?printed (picture|image))\b",
@@ -1076,7 +1214,7 @@ def target_complexity_reasons(source: dict, target: dict, pair: dict, args) -> l
         re.I,
     ):
         reasons.append("target_text_or_label_only_layout")
-    if re.search(
+    if not source_present and re.search(
         r"\b(how[- ]to|how to|step[- ]by[- ]step|step\s*[1-9]|instructional collage|"
         r"tutorial|usage collage|application steps?|four[- ]panel|multi[- ]panel how[- ]to|"
         r"two[- ]panel|two[- ]scene|split[- ]scene|multi[- ]scene|"
@@ -1085,7 +1223,7 @@ def target_complexity_reasons(source: dict, target: dict, pair: dict, args) -> l
         re.I,
     ):
         reasons.append("target_instructional_or_step_collage")
-    if re.search(
+    if not source_present and re.search(
         r"\b(all[- ]in[- ]one[- ]kit includes|all[- ]in[- ]one kit includes|kit includes|"
         r"bundle includes|content list|component list|accessory list|inventory list|"
         r"list of included items|included accessories)\b",
@@ -1093,7 +1231,7 @@ def target_complexity_reasons(source: dict, target: dict, pair: dict, args) -> l
         re.I,
     ):
         reasons.append("target_component_list_or_bundle_layout")
-    if re.search(
+    if not source_present and re.search(
         r"\b(stacked display|complex stacked display|drawer display|gold[- ]drawer display|"
         r"display drawers?|more complex stacked|stacked gold)\b",
         descriptive_text,
@@ -1116,6 +1254,14 @@ def target_complexity_reasons(source: dict, target: dict, pair: dict, args) -> l
         r"different visible package|package redesign|replacement package layout)\b",
         descriptive_text,
         re.I,
+    ) and (
+        not pair_claims_same_source_product(pair)
+        or re.search(
+            r"\b(different|changed|redesign|replacement|not an exact|mismatch|"
+            r"different visible|different front|different package)\b",
+            descriptive_text,
+            re.I,
+        )
     ):
         reasons.append("target_alternate_package_layout")
     return reasons
@@ -1191,12 +1337,12 @@ def postprocess_annotation(annotation: dict, args) -> tuple[dict, list[dict]]:
             and not product_reasons
             and not pair_declares_product_mismatch(pair)
             and not pair_declares_missing_source_component(pair)
-            and not source_target_kind_conflict(source, target)
+            and not source_target_kind_conflict(source, target, pair)
             and not target_introduces_outer_packaging(source, target, pair)
             and not target_drops_source_package_or_container(source, target, pair)
             and not target_loses_identity_surface(source, target, pair)
             and not target_missing_physical_product_object(source, target, pair)
-            and not target_introduces_extra_product_count(source, target)
+            and not target_introduces_extra_product_count(source, target, pair)
             and not presence_reasons
         )
 
@@ -1260,7 +1406,7 @@ def postprocess_annotation(annotation: dict, args) -> tuple[dict, list[dict]]:
             reasons.append("model_declared_different_sku_or_product")
         if pair_declares_missing_source_component(pair):
             reasons.append("model_declared_missing_source_component")
-        if source_target_kind_conflict(source, target):
+        if source_target_kind_conflict(source, target, pair):
             reasons.append("source_target_product_kind_conflict")
         if target_introduces_outer_packaging(source, target, pair):
             reasons.append("target_introduces_outer_packaging_not_in_source")
@@ -1270,7 +1416,7 @@ def postprocess_annotation(annotation: dict, args) -> tuple[dict, list[dict]]:
             reasons.append("target_loses_source_identity_surface")
         if target_missing_physical_product_object(source, target, pair):
             reasons.append("target_missing_physical_source_product_object")
-        if target_introduces_extra_product_count(source, target):
+        if target_introduces_extra_product_count(source, target, pair):
             reasons.append("target_introduces_extra_product_count")
         reasons.extend(presence_reasons)
         reasons.extend(target_complexity_reasons(source, target, pair, args))
