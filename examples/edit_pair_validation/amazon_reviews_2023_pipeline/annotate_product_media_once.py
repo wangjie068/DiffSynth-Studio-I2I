@@ -37,10 +37,10 @@ Hard rules:
 - Do not set source_product_object_set_present_in_target=true when the target only shows a similar functional item with changed visible product color, material, package form, language/script, or text identity. A purple organizer becoming a black scrub pocket is not the same source product.
 - Example: if the source is a green retail soap box, a target that only shows matching soap bars, fragrance props, or brand text without that same green box must set source_product_object_set_present_in_target=false. If the target still shows the same green box plus soap bars/props, it can be true.
 - Example: if the source is a bottle/jar/tube and the target shows that same object held by a person, in a lifestyle scene, or inside an ad layout, it can be true even with hands, faces, props, or partial occlusion.
-- If the source shows multiple major saleable objects, for example box + bottle, kit + applicator, two bottles, bag + compartment, or device + accessory, the target may focus on one exact source object when that object remains complete and identity-safe. Do not reject only because a multi-object source becomes a one-object target. But if the source is a boxed/gift/display set and the target keeps only loose internal contents while dropping the identity-bearing outer box/package, reject it.
+- If the source shows multiple major saleable objects, for example box + bottle, kit + applicator, two bottles, bag + compartment, or device + accessory, the target may focus on one exact source object when that object remains complete and identity-safe. Do not reject only because a multi-object source becomes a one-object target. But if the source is mainly an identity-bearing box/card/blister/package/gift/display set and the target keeps only loose internal contents or an inner jar/tube/bottle while dropping that identity-bearing package surface, reject it.
 - If the source shows one major saleable product object, do not accept targets that introduce extra saleable products, related collection items, variants, or other SKUs around it. A one-product source becoming a multi-product catalog group is not a valid pair.
-- Do not accept package-form substitutions or additions: box-to-bottle, bottle-to-box, box-to-soap-bar-only, box-to-flat-lay-contents, jar-to-label, product-to-front-panel, adding an outer retail box that was not in the source, replacing the source SKU with only related collection/bundle/different SKU products, alternate package layouts, or targets where the product only appears as a printed picture on retail packaging.
-- Do not accept a clean front package/source image converted into a back/rear/side/interior information view with dense copy, ingredient/directions text, open compartments, or hidden front identity, even when it is the same physical object.
+- Do not accept package-form substitutions or additions: box-to-bottle, bottle-to-box, box-to-jar-only, retail-card/blister-to-jar-only, box-to-soap-bar-only, box-to-flat-lay-contents, jar-to-label, product-to-front-panel, adding an outer retail box that was not in the source, replacing the source SKU with only related collection/bundle/different SKU products, alternate package layouts, or targets where the product only appears as a printed picture on retail packaging.
+- Do not accept a clean front package/source image converted into a back/rear/side/interior information view with dense copy, ingredient/directions text, quality-promise panels, open compartments, or hidden front identity, even when it is the same physical object.
 - Reject/down-score if source and target readable product-type words conflict, such as spray vs shampoo, bottle vs retail box, lotion vs soap, or serum vs shampoo.
 - Reject/down-score target images where the source product object/set is missing, replaced, cropped out, back/rear view when source is front, dense side/back label view, a pure size chart/manual/ingredient panel, feature table, text-only infographic, swatch board, before-after-only panel, or complex multi-panel/product-grid comparison collage.
 - Reject/down-score clean sources that include external color swatches, shade strips, smear samples, or variant comparison samples outside the product itself.
@@ -673,9 +673,14 @@ def pair_declares_missing_source_component(pair: dict) -> bool:
         text,
         re.I,
     ) or re.search(
-        r"\b(box .{0,40} into .{0,40}(soap bars?|bars?|flat[- ]?lay)|"
-        r"box shot .{0,40} into .{0,40}(soap bars?|bars?|flat[- ]?lay)|"
+        r"\b((box|package|packaging|retail card|carded package|blister|blister pack) .{0,40} into .{0,40}"
+        r"(soap bars?|bars?|flat[- ]?lay|standalone (jar|pot|bottle|tube)|isolated (jar|pot|bottle|tube)|"
+        r"inner (jar|pot|bottle|tube)|jar closeup|pot closeup|detail render)|"
+        r"box shot .{0,40} into .{0,40}(soap bars?|bars?|flat[- ]?lay|standalone (jar|pot|bottle|tube)|"
+        r"isolated (jar|pot|bottle|tube)|jar closeup|pot closeup)|"
         r"(bottle|jar|tube) .{0,30} into (a )?(box|boxed|retail pack)|"
+        r"(box|package|packaging|retail card|carded package|blister|blister pack)[- ]to[- ]"
+        r"(jar|pot|bottle|tube|inner product|product[- ]only|detail)|"
         r"source .{0,30} into .{0,30}(related collection|collection image|bundle|different sku))\b",
         instruction_text,
         re.I,
@@ -838,17 +843,53 @@ def target_drops_source_package_or_container(source: dict, target: dict, pair: d
         " ".join(flatten_text_values(pair.get("edit_instruction"))),
         " ".join(flatten_text_values(pair.get("edit_instruction_detailed"))),
     ])
-    source_has_box = re.search(r"\b(box|boxed|retail pack|outer package|outer box|carton)\b", source_text, re.I)
-    target_preserves_box = re.search(r"\b(same|full|complete|preserve[sd]?|keeps?) .{0,25}\b(box|package|packaging|carton)\b", target_text, re.I)
-    target_drops_to_contents = re.search(
-        r"\b(box[- ]to[- ]((soap[- ])?bar|bath bombs?|bottle|jar|tube|container|product[- ]only)|"
-        r"box .{0,40} into .{0,40}(soap bars?|bars?|bath bombs?|flat[- ]?lay|contents|bottle[- ]only|jar[- ]only|tube[- ]only|single bottle|single jar)|"
-        r"target drops? .{0,20}(box|package|packaging)|package is absent|"
-        r"drops? the box|bar[- ]only|soap[- ]bar[- ]only|shifts? to bar[- ]only)\b",
+    source_has_box = re.search(
+        r"\b(box|boxed|retail pack|outer package|outer box|carton|package|packaging|"
+        r"retail card|carded package|hanging card|product card|backing card|blister|blister pack)\b",
+        source_text,
+        re.I,
+    )
+    source_has_inner_product = re.search(
+        r"\b(bottle|jar|pot|tube|spray|pump|serum|cream|balm|lip cream|cologne|perfume|fragrance)\b",
+        source_text,
+        re.I,
+    )
+    source_package_is_primary = bool(source_has_box and (
+        not source_has_inner_product
+        or re.search(
+            r"\b(front|main|clean|identity[- ]bearing|retail|carded|blister|package|packaging) .{0,35}"
+            r"(box|package|packaging|retail card|carded package|hanging card|product card|blister|blister pack)|"
+            r"\b(box|package|packaging|retail card|carded package|hanging card|product card|blister|blister pack) "
+            r".{0,35}(front|main|dominates|primary|identity[- ]bearing|retail)\b",
+            source_text,
+            re.I,
+        )
+    ))
+    target_preserves_box = re.search(
+        r"\b(same|full|complete|preserve[sd]?|keeps?|retains?|reappears?) .{0,30}"
+        r"\b(box|package|packaging|carton|retail card|carded package|blister|blister pack)\b",
         target_text,
         re.I,
     )
-    target_has_box = re.search(r"\b(box|boxed|package|packaging|retail pack|outer box|carton)\b", target_text, re.I)
+    target_drops_to_contents = re.search(
+        r"\b((box|package|packaging|retail card|carded package|blister|blister pack)[- ]to[- ]"
+        r"((soap[- ])?bar|bath bombs?|bottle|jar|pot|tube|container|inner product|product[- ]only|detail)|"
+        r"(box|package|packaging|retail card|carded package|blister|blister pack) .{0,45} into .{0,45}"
+        r"(soap bars?|bars?|bath bombs?|flat[- ]?lay|contents|bottle[- ]only|jar[- ]only|pot[- ]only|"
+        r"tube[- ]only|single bottle|single jar|standalone (jar|pot|bottle|tube)|isolated (jar|pot|bottle|tube)|"
+        r"inner (jar|pot|bottle|tube)|jar closeup|pot closeup|detail render)|"
+        r"target drops? .{0,20}(box|package|packaging)|package is absent|"
+        r"drops? the (box|package|packaging|card|blister)|"
+        r"bar[- ]only|soap[- ]bar[- ]only|shifts? to bar[- ]only|"
+        r"(standalone|isolated|clean isolated) (jar|pot|bottle|tube) (closeup|detail|shot|render))\b",
+        target_text,
+        re.I,
+    )
+    target_has_box = re.search(
+        r"\b(box|boxed|package|packaging|retail pack|outer box|carton|retail card|carded package|blister|blister pack)\b",
+        target_text,
+        re.I,
+    )
     target_shows_loose_contents = re.search(
         r"\b(soap bars?|beauty bars?|bath bombs?|loose contents?|individual items?|flat[- ]?lay|unboxed contents?)\b",
         target_text,
@@ -859,15 +900,19 @@ def target_drops_source_package_or_container(source: dict, target: dict, pair: d
         source_text,
         re.I,
     )
-    target_image_has_box = re.search(r"\b(box|boxed|package|packaging|retail pack|outer box|carton)\b", target_image_text, re.I)
+    target_image_has_box = re.search(
+        r"\b(box|boxed|package|packaging|retail pack|outer box|carton|retail card|carded package|blister|blister pack)\b",
+        target_image_text,
+        re.I,
+    )
     target_image_shows_set_contents = (
         as_bool(target.get("has_multiple_products"))
         or as_float(target.get("product_instance_count"), 1.0) > 1.25
-        or re.search(r"\b(six|multiple|several|row of|lineup of)?\s*(bottles?|jars?|tubes?|items?)\b", target_image_text, re.I)
+        or re.search(r"\b(six|multiple|several|row of|lineup of)\s*(bottles?|jars?|tubes?|items?)\b", target_image_text, re.I)
     )
     if source_is_boxed_set and target_image_shows_set_contents and not target_image_has_box:
         return True
-    return bool(source_has_box and not target_preserves_box and (
+    return bool(source_package_is_primary and not target_preserves_box and (
         target_drops_to_contents or (target_shows_loose_contents and not target_has_box)
     ))
 
@@ -887,6 +932,8 @@ def target_loses_identity_surface(source: dict, target: dict, pair: dict) -> boo
         pair.get("pair_quality_judgement"),
         pair.get("pair_failure_modes"),
         pair.get("product_text_match_notes"),
+        pair.get("edit_instruction"),
+        pair.get("edit_instruction_detailed"),
     ]))
     if target_view in {"inside", "interior"} or pair_view in {"front_to_inside", "front_to_interior"}:
         return True
@@ -900,14 +947,21 @@ def target_loses_identity_surface(source: dict, target: dict, pair: dict) -> boo
         r"front label (is )?(hidden|missing|not visible|obscured)|"
         r"tucked into|inserted into|inside (a )?(pocket|container|bag|scrub pocket)|"
         r"mostly hidden|largely hidden|only (partly|partially) visible|open compartments?|"
-        r"open (bag|organizer|interior|compartment|pouch)|same bag open|interior view)\b",
+        r"open(ed)? (bag|organizer|interior|compartment|pouch|toiletry bag)|"
+        r"(bag|organizer|pouch|toiletry bag) .{0,30} open|same bag open|"
+        r"interior view|inside view|open interior|interior compartments?|"
+        r"(bag|organizer|pouch|toiletry bag).{0,60}sits flat on counter|"
+        r"sits flat on counter.{0,60}(bag|organizer|pouch|toiletry bag)|"
+        r"counter lifestyle scene with .{0,40}open)\b",
         text,
         re.I,
     ):
         return True
     if target_text_density == "high" and re.search(
         r"\b(ingredient (label|panel|presentation)|directions? (label|panel|copy)|"
-        r"instruction (label|panel|copy)|back-of-pack|back of pack|dense ingredient copy)\b",
+        r"instruction (label|panel|copy)|back-of-pack|back of pack|dense ingredient copy|"
+        r"dense directions? copy|dense package copy|dense retail copy|quality[- ]promise panel|"
+        r"quality[- ]text panels?|German quality[- ]text panels?)\b",
         text,
         re.I,
     ):
@@ -1046,6 +1100,16 @@ def target_complexity_reasons(source: dict, target: dict, pair: dict, args) -> l
         re.I,
     ):
         reasons.append("target_complex_stacked_display")
+    if re.search(
+        r"\b(dense catalog[- ]ad|dense promotional layout|dense package copy|dense retail copy|"
+        r"dense (German )?(quality[- ]text|copy|body copy|text) panels?|quality[- ]promise panel|"
+        r"German quality[- ]text panels?|back[- ]of[- ]pack style|back of pack style|"
+        r"directions?/ingredients? panel|ingredient/directions text|dense information panel|"
+        r"front package/source image converted into .{0,40}(back|rear|side|information view))\b",
+        descriptive_text,
+        re.I,
+    ):
+        reasons.append("target_dense_package_or_information_panel")
     if re.search(
         r"\b(alternate package layout|alternate package|alternate front package|"
         r"alternate front packaging|clean alternate front packaging|different front packaging|"
