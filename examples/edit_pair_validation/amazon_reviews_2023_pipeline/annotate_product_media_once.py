@@ -22,7 +22,7 @@ ANNOTATION_PROMPT = """You are an e-commerce visual annotator for image-to-image
 
 Return STRICT JSON only. Annotate one Amazon product/ASIN in one pass.
 
-Goal: select high-quality source-target product image pairs for training. Keep output compact, but do not weaken pair quality judgment.
+Goal: select high-quality source-target product image pairs for training product logo, front-label, package-text, and small-text preservation. Keep output compact, but do not weaken pair quality judgment.
 
 Hard rules:
 - You receive N numbered images. Return exactly one "images" item for every input image_index. Do not omit bad images; mark them exclude.
@@ -31,7 +31,7 @@ Hard rules:
 - If two images show the same product where one is clean/product-only and the other is styled/prop/ad/lifestyle, output the pair in clean-to-styled direction, not the reverse.
 - Select every high-value training pair from the chosen source, usually 1-6 if available. Do not chase coverage; skip borderline, redundant, or merely acceptable pairs.
 - The "pairs" array should contain only plausible training candidates. Do not add rejected pairs just to explain failures; describe bad targets in their image fields instead.
-- A valid target must contain the same complete source product object or source product set as real visible objects. Category does not matter: bottles, jars, boxes, bags, tools, devices, accessories, kits, and other products are all valid if the source product has useful logo/text/small-text identity to preserve.
+- A valid target must contain the same complete source product object or source product set as real visible objects, and both source and target must expose meaningful identity-bearing product/package text worth preserving. Category does not matter, but text-poor shape/angle/use-context pairs are not valid for this run.
 - It is OK if the source product is smaller, held by a person, surrounded by props, or accompanied by related products in the target. Partial occlusion is OK only when the complete source product object/set is still identifiable; do not accept targets where the source product is mostly hidden inside a pocket/container, reduced to tiny background branding, or visually dominated by unrelated usage context.
 - For every pair, explicitly verify the source product object/set inventory against the target. Same brand, same logo, same text, related products, or related contents do not count unless the actual source product object/set is visible in the target.
 - Do not set source_product_object_set_present_in_target=true when the target only shows a similar functional item with changed visible product color, material, package form, language/script, or text identity. A purple organizer becoming a black scrub pocket is not the same source product.
@@ -55,9 +55,9 @@ Hard rules:
 - Reject/down-score side/back/rear packaging views with dense side-panel text when the source is a front package view.
 - Reject/down-score if the target appears to be a different product type, brand, formula, SKU, package, or visible product text, even if colors or category look similar.
 - Humans/faces/hands and partial occlusion are OK when the same source product object/set is still recognizable as present in the target.
-- Preserve brand/logo, front label, package shape, color, cap/pump/tube geometry, and useful small text.
+- Preserve brand/logo, front label, package shape, color, cap/pump/tube geometry, and useful small text. For this dataset, prioritize pairs with clear text-preservation value over visually interesting but text-poor edits.
 - Prefer controlled transformations that improve aesthetics: clean ad layout, polished lifestyle scene, better lighting/background, or controlled angle change. A high transformation is valid only when the same complete source product object/set remains identifiable and identity-safe.
-- Small text means fine label/capacity/ingredient/warning text, dense package copy, small ad callouts, and icon labels. OCR best-effort; use "[unreadable]" instead of inventing text.
+- Small text means identity-bearing fine label/capacity/ingredient/warning/package text on the product or package. Do not count dimensions, step labels, instruction cards, benefit bullets, generic ad copy, or pure object logos as high-value small text. OCR best-effort; use "[unreadable]" instead of inventing text.
 - Keep OCR/transcriptions in the exact visible script and language. Do not translate Chinese, Japanese, Korean, German, French, or other non-English text into English.
 
 Text and description rules:
@@ -1560,7 +1560,7 @@ def parse_args():
     parser.add_argument("--image-jsonl", type=Path, default=Path("data/amazon_reviews_2023/media_all/annotations/amazon_reviews_2023_media_urls.jsonl"))
     parser.add_argument("--product-raw-jsonl", type=Path)
     parser.add_argument("--out", type=Path, default=Path("data/amazon_reviews_2023/annotations/product_annotations.jsonl"))
-    parser.add_argument("--max-products", type=int, default=10)
+    parser.add_argument("--max-products", type=int, default=0)
     parser.add_argument("--max-images-per-product", type=int, default=10)
     parser.add_argument("--min-images", type=int, default=4)
     parser.add_argument("--max-scan-lines", type=int, default=None)
@@ -1586,7 +1586,7 @@ def parse_args():
     parser.add_argument("--min-pair-identity-confidence", type=float, default=0.85)
     parser.add_argument("--min-pair-target-aesthetic-score", type=float, default=0.0)
     parser.add_argument("--min-pair-logo-preservation-score", type=float, default=0.0)
-    parser.add_argument("--min-pair-small-text-training-score", type=float, default=0.0)
+    parser.add_argument("--min-pair-small-text-training-score", type=float, default=0.65)
     parser.add_argument("--min-product-logo-text-suitability-score", type=float, default=0.0)
     parser.add_argument(
         "--blocked-product-regex",
