@@ -29,16 +29,16 @@ Hard rules:
 - Select the best clean source image yourself; Amazon MAIN is only a hint. Prefer a simple product-only catalog image on a white/transparent/studio background with readable product logo/text/small text. If both a white-background catalog source and a styled/lifestyle/prop source exist, choose the white-background catalog source. If both a single product and a multi-pack/bundle/group shot exist, choose the source whose complete product set is most likely to reappear in targets. Do not choose a source whose product identity text is mostly unreadable unless no usable text-bearing source exists. Images with fruit, flowers, ingredient props, lifestyle background, marketing layout, or richer styling are usually targets, not sources.
 - If several clean source candidates exist in the same product family, choose the one whose visible color, package form, size, and SKU best match the strongest target candidates. Do not create a color/package-change pair when a cleaner same-color/same-package source exists.
 - If two images show the same product where one is clean/product-only and the other is styled/prop/ad/lifestyle, output the pair in clean-to-styled direction, not the reverse.
-- Select every high-value training pair from the chosen source, usually 1-6 if available. Do not chase coverage; skip borderline, redundant, or merely acceptable pairs.
+- Select every high-value text-preservation training pair from the chosen source, usually 1-6 if available. Include controlled one-panel ad/lifestyle/infographic targets when the same source product stays intact and readable; skip borderline, redundant, or merely acceptable pairs.
 - The "pairs" array should contain only plausible training candidates. Do not add rejected pairs just to explain failures; describe bad targets in their image fields instead.
-- A valid target must contain the same complete source product object or source product set as real visible objects, and both source and target must expose meaningful identity-bearing product/package text worth preserving. Category does not matter, but text-poor shape/angle/use-context pairs are not valid for this run.
+- A valid target must contain the same complete source product object or source product set as real visible objects, and both source and target must expose meaningful identity-bearing product/package text worth preserving. Category does not matter, but text-poor shape/angle/use-context/texture/material pairs are not valid for this run.
 - It is OK if the source product is smaller, held by a person, surrounded by props, or accompanied by related products in the target. Partial occlusion is OK only when the complete source product object/set is still identifiable; do not accept targets where the source product is mostly hidden inside a pocket/container, reduced to tiny background branding, or visually dominated by unrelated usage context.
 - For every pair, explicitly verify the source product object/set inventory against the target. Same brand, same logo, same text, related products, or related contents do not count unless the actual source product object/set is visible in the target.
 - Do not set source_product_object_set_present_in_target=true when the target only shows a similar functional item with changed visible product color, material, package form, language/script, or text identity. A purple organizer becoming a black scrub pocket is not the same source product.
 - Example: if the source is a green retail soap box, a target that only shows matching soap bars, fragrance props, or brand text without that same green box must set source_product_object_set_present_in_target=false. If the target still shows the same green box plus soap bars/props, it can be true.
 - Example: if the source is a bottle/jar/tube and the target shows that same object held by a person, in a lifestyle scene, or inside an ad layout, it can be true even with hands, faces, props, or partial occlusion.
 - If the source shows multiple major saleable objects, for example box + bottle, kit + applicator, two bottles, bag + compartment, or device + accessory, the target may focus on one exact source object when that object remains complete and identity-safe. Do not reject only because a multi-object source becomes a one-object target. But if the source is mainly an identity-bearing box/card/blister/package/gift/display set and the target keeps only loose internal contents or an inner jar/tube/bottle while dropping that identity-bearing package surface, reject it.
-- If the source shows one major saleable product object, do not accept targets that introduce extra saleable products, related collection items, variants, or other SKUs around it. A one-product source becoming a multi-product catalog group is not a valid pair.
+- If the source shows one major saleable product object, do not accept targets that introduce extra saleable products, related collection items, variants, or other SKUs around it. Repeating the same exact source product as an ad duplicate is OK; a one-product source becoming a multi-SKU catalog group is not valid.
 - Do not accept package-form substitutions or additions: box-to-bottle, bottle-to-box, box-to-jar-only, retail-card/blister-to-jar-only, box-to-soap-bar-only, box-to-flat-lay-contents, jar-to-label, product-to-front-panel, adding an outer retail box that was not in the source, replacing the source SKU with only related collection/bundle/different SKU products, alternate package layouts, or targets where the product only appears as a printed picture on retail packaging.
 - Do not accept a clean front package/source image converted into a back/rear/side/interior information view with dense copy, ingredient/directions text, quality-promise panels, open compartments, or hidden front identity, even when it is the same physical object.
 - If the source is mainly a front box/card/blister/package, a target that keeps only the inner bottle/jar/tube without the source package is invalid. If the source includes a real separate bottle/jar/tube next to the package, that exact object can be a valid target.
@@ -57,7 +57,7 @@ Hard rules:
 - Humans/faces/hands and partial occlusion are OK when the same source product object/set is still recognizable as present in the target.
 - Preserve brand/logo, front label, package shape, color, cap/pump/tube geometry, and useful small text. For this dataset, prioritize pairs with clear text-preservation value over visually interesting but text-poor edits.
 - Prefer controlled transformations that improve aesthetics: clean ad layout, polished lifestyle scene, better lighting/background, or controlled angle change. A high transformation is valid only when the same complete source product object/set remains identifiable and identity-safe.
-- Small text means identity-bearing fine label/capacity/ingredient/warning/package text on the product or package. Do not count dimensions, step labels, instruction cards, benefit bullets, generic ad copy, or pure object logos as high-value small text. OCR best-effort; use "[unreadable]" instead of inventing text.
+- Small text means identity-bearing fine label/capacity/ingredient/warning/package text on the product or package. Do not count dimensions, step labels, instruction cards, benefit bullets, generic ad copy, pure object logos, texture/shape labels, or hairstyle/material descriptors as high-value small text. OCR best-effort; use "[unreadable]" instead of inventing text.
 - Keep OCR/transcriptions in the exact visible script and language. Do not translate Chinese, Japanese, Korean, German, French, or other non-English text into English.
 
 Text and description rules:
@@ -549,6 +549,11 @@ def product_reject_reasons(annotation: dict, args) -> list[str]:
         reasons.append("blocked_product_type:flat_decorative_sheet_or_sticker")
     if product.get("is_suitable_logo_text_product") is False:
         reasons.append("unsuitable_logo_text_product")
+    if product.get("has_small_text") is False:
+        reasons.append("product_has_no_small_text")
+    small_text_potential = str(product.get("small_text_training_potential") or "").strip().lower()
+    if small_text_potential in {"none", "low"}:
+        reasons.append(f"product_small_text_training_potential:{small_text_potential}")
     suitability = product.get("logo_text_product_suitability_score")
     if suitability is not None and as_float(suitability, 1.0) < args.min_product_logo_text_suitability_score:
         reasons.append(f"logo_text_product_suitability_score<{args.min_product_logo_text_suitability_score}")
@@ -569,10 +574,25 @@ def target_introduces_extra_product_count(source: dict, target: dict, pair: Opti
             (pair or {}).get("edit_instruction"),
             (pair or {}).get("edit_instruction_detailed"),
         ]))
+        combined_text = " ".join([source_text, image_identity_text(target), pair_text])
         if re.search(r"\b(gift box|gift set|box set|boxed set|kit|set|bath bombs?)\b", source_text, re.I) and re.search(
             r"\b(same (set|kit|inventory|contents)|full (set|kit|inventory)|all (six|[0-9]+)|"
             r"open[- ]box presentation|contents? visible)\b",
             pair_text,
+            re.I,
+        ):
+            return False
+        if target_count > source_count + 0.75 and re.search(
+            r"\b(same exact|exact same|same source|same product|source product|identical)\b.{0,80}"
+            r"\b(repeated|duplicate|copy|second view|smaller copy|ad duplicate|background duplicate)\b|"
+            r"\b(repeated|duplicate|copy|second view|smaller copy|ad duplicate|background duplicate)\b.{0,80}"
+            r"\b(same exact|exact same|same source|same product|source product|identical)\b",
+            combined_text,
+            re.I,
+        ) and not re.search(
+            r"\b(related products?|related collection|variants?|other skus?|different sku|"
+            r"multi[- ]sku|bundle|collection image|same brand but different)\b",
+            combined_text,
             re.I,
         ):
             return False
@@ -1587,7 +1607,7 @@ def parse_args():
     parser.add_argument("--min-pair-target-aesthetic-score", type=float, default=0.0)
     parser.add_argument("--min-pair-logo-preservation-score", type=float, default=0.0)
     parser.add_argument("--min-pair-small-text-training-score", type=float, default=0.65)
-    parser.add_argument("--min-product-logo-text-suitability-score", type=float, default=0.0)
+    parser.add_argument("--min-product-logo-text-suitability-score", type=float, default=0.65)
     parser.add_argument(
         "--blocked-product-regex",
         default=(
