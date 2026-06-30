@@ -1563,7 +1563,7 @@ def parse_args():
     parser.add_argument("--max-products", type=int, default=10)
     parser.add_argument("--max-images-per-product", type=int, default=10)
     parser.add_argument("--min-images", type=int, default=4)
-    parser.add_argument("--max-scan-lines", type=int, default=500000)
+    parser.add_argument("--max-scan-lines", type=int, default=None)
     parser.add_argument("--category-regex", default="All_Beauty")
     parser.add_argument("--title-regex", default=r"serum|cream|moisturizer|lotion|shampoo|conditioner|sunscreen|cleanser|face wash|toner|oil|balm|body wash|spray|gel|essence|mask|scrub")
     parser.add_argument("--validate-urls", action="store_true")
