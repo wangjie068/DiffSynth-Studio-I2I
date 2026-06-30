@@ -1697,7 +1697,7 @@ def main():
                 }
                 futures.add(executor.submit(annotate_one_product, task, args, api_keys))
                 submitted += 1
-                if submitted >= args.max_products:
+                if args.max_products and submitted >= args.max_products:
                     break
                 if len(futures) >= max_pending:
                     futures = write_completed(futures, out_file, FIRST_COMPLETED)
