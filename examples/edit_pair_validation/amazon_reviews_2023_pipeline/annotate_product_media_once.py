@@ -22,23 +22,29 @@ ANNOTATION_PROMPT = """You are an e-commerce visual annotator for image-to-image
 
 Return STRICT JSON only. Annotate one Amazon product/ASIN in one pass.
 
-Goal: select high-quality source-target product image pairs for training product logo, front-label, package-text, and small-text preservation. Keep output compact, but do not weaken pair quality judgment.
+Goal: select source-target product image pairs for training product preservation. The source and target must show the same real product identity: same visible SKU/formula/package object or an exact component visibly present in the source set. Preserve product logo, front-label, package text, package shape/color, and small text. This is not a generic ad-generation dataset; visual appeal is secondary to product consistency. Keep output compact, but do not weaken pair quality judgment.
 
 Hard rules:
 - You receive N numbered images. Return exactly one "images" item for every input image_index. Do not omit bad images; mark them exclude.
 - Select the best clean source image yourself; Amazon MAIN is only a hint. Prefer a simple product-only catalog image on a white/transparent/studio background with readable product logo/text/small text. If both a white-background catalog source and a styled/lifestyle/prop source exist, choose the white-background catalog source. If both a single product and a multi-pack/bundle/group shot exist, choose the source whose complete product set is most likely to reappear in targets. Do not choose a source whose product identity text is mostly unreadable unless no usable text-bearing source exists. Images with fruit, flowers, ingredient props, lifestyle background, marketing layout, or richer styling are usually targets, not sources.
 - If several clean source candidates exist in the same product family, choose the one whose visible color, package form, size, and SKU best match the strongest target candidates. Do not create a color/package-change pair when a cleaner same-color/same-package source exists.
+- Prefer source images without external shade samples, nail color swatches, color cards, comparison props, or unrelated accessories. A source with one adjacent shade/sample object is still usable when the main product/package text is clear and it is the best identity-safe source.
 - If two images show the same product where one is clean/product-only and the other is styled/prop/ad/lifestyle, output the pair in clean-to-styled direction, not the reverse.
-- Select every high-value text-preservation training pair from the chosen source, usually 1-6 if available. Include controlled one-panel ad/lifestyle/infographic targets when the same source product stays intact and readable; skip borderline, redundant, or merely acceptable pairs.
+- Select every high-value text-preservation training pair from the chosen source, usually 1-6 if available. Include all controlled one-panel ad/lifestyle/infographic targets when the same source product stays intact and readable. Also include clean alternate-angle/detail/component targets when an exact source object remains complete, readable, and identity-safe; do not stop after the best ad pair if other valid training pairs exist. Skip borderline, redundant, or merely acceptable pairs.
 - The "pairs" array should contain only plausible training candidates. Do not add rejected pairs just to explain failures; describe bad targets in their image fields instead.
+- False rejects are acceptable; false accepts are not. If exact product identity, object count direction, package form, or readable product text consistency is uncertain, mark the pair bad_or_uncertain or reject it instead of accepting it.
 - A valid target must contain the same complete source product object or source product set as real visible objects, and both source and target must expose meaningful identity-bearing product/package text worth preserving. Category does not matter, but text-poor shape/angle/use-context/texture/material pairs are not valid for this run.
+- Same brand, same product line, similar packaging, matching color palette, or related contents are not enough. Valid pairs require exact visible product identity consistency, especially readable brand/product-name/formula/size/package text when present.
 - It is OK if the source product is smaller, held by a person, surrounded by props, or accompanied by related products in the target. Partial occlusion is OK only when the complete source product object/set is still identifiable; do not accept targets where the source product is mostly hidden inside a pocket/container, reduced to tiny background branding, or visually dominated by unrelated usage context.
 - For every pair, explicitly verify the source product object/set inventory against the target. Same brand, same logo, same text, related products, or related contents do not count unless the actual source product object/set is visible in the target.
 - Do not set source_product_object_set_present_in_target=true when the target only shows a similar functional item with changed visible product color, material, package form, language/script, or text identity. A purple organizer becoming a black scrub pocket is not the same source product.
 - Example: if the source is a green retail soap box, a target that only shows matching soap bars, fragrance props, or brand text without that same green box must set source_product_object_set_present_in_target=false. If the target still shows the same green box plus soap bars/props, it can be true.
 - Example: if the source is a bottle/jar/tube and the target shows that same object held by a person, in a lifestyle scene, or inside an ad layout, it can be true even with hands, faces, props, or partial occlusion.
 - If the source shows multiple major saleable objects, for example box + bottle, kit + applicator, two bottles, bag + compartment, or device + accessory, the target may focus on one exact source object when that object remains complete and identity-safe. Do not reject only because a multi-object source becomes a one-object target. But if the source is mainly an identity-bearing box/card/blister/package/gift/display set and the target keeps only loose internal contents or an inner jar/tube/bottle while dropping that identity-bearing package surface, reject it.
+- When the selected source is a set/bundle and another image shows one exact component from that source set on a clean background, alternate angle, detail view, or simple ad layout, include it as a valid pair if the component text/logo/package identity is readable and unchanged. In this exact-component case, set source_product_object_set_present_in_target=true and do not list absent sibling items as missing components.
+- Product count may go from more to fewer only when every target product is an exact visible product/component from the source. Product count must not go from fewer to more; a single-product source cannot become a multi-product target.
 - If the source shows one major saleable product object, do not accept targets that introduce extra saleable products, related collection items, variants, or other SKUs around it. Repeating the same exact source product as an ad duplicate is OK; a one-product source becoming a multi-SKU catalog group is not valid.
+- If the source is only a bottle/jar/tube/product, do not accept a target that adds a retail box, outer package, boxed set, window box, or extra tube/bottle unless that exact object was already visible in the source.
 - Do not accept package-form substitutions or additions: box-to-bottle, bottle-to-box, box-to-jar-only, retail-card/blister-to-jar-only, box-to-soap-bar-only, box-to-flat-lay-contents, jar-to-label, product-to-front-panel, adding an outer retail box that was not in the source, replacing the source SKU with only related collection/bundle/different SKU products, alternate package layouts, or targets where the product only appears as a printed picture on retail packaging.
 - Do not accept a clean front package/source image converted into a back/rear/side/interior information view with dense copy, ingredient/directions text, quality-promise panels, open compartments, or hidden front identity, even when it is the same physical object.
 - If the source is mainly a front box/card/blister/package, a target that keeps only the inner bottle/jar/tube without the source package is invalid. If the source includes a real separate bottle/jar/tube next to the package, that exact object can be a valid target.
@@ -192,7 +198,7 @@ Return this compact JSON shape:
       "small_text_change": "preserve_same_text/reposition_text/resize_text/add_marketing_small_text/remove_or_obscure_text/no_small_text/uncertain",
       "small_text_training_value_score": 0.0,
       "product_text_match_score": 0.0,
-      "product_text_match_notes": "brief comparison of source and target brand/product/formula/package text",
+      "product_text_match_notes": "strict comparison of exact source and target brand/product/formula/SKU/package text; say if it is only same brand/line",
       "logo_preservation": "exact logo/brand requirements",
       "small_text_preservation": "exact label/text-zone requirements",
       "small_text_generation": "new text/callouts if any",
@@ -949,7 +955,9 @@ def target_introduces_outer_packaging(source: dict, target: dict, pair: dict) ->
         r"\b(matching box|outer box|retail box|boxed retail|retail pack|"
         r"plus (a )?(matching )?(box|outer box|retail box)|adds? (a )?(box|outer box|retail box)|"
         r"with (a )?(matching )?(box|outer box|retail box)|"
-        r"same .{0,40}box|box centered|package box|retail package)\b",
+        r"same .{0,40}box|box centered|package box|retail package|window box|boxed set|"
+        r"(gold|black|white|colored|matching) .{0,20}(box|package)|"
+        r"(box|package) .{0,30}(with|contains|holding|visible through))\b",
         target_text,
         re.I,
     )
@@ -1197,6 +1205,8 @@ def target_complexity_reasons(source: dict, target: dict, pair: dict, args) -> l
     layout_type = str(target.get("layout_type") or "").lower()
     layout_complexity = str(target.get("layout_complexity") or "").lower()
     pair_type = str(pair.get("pair_type") or "").lower()
+    source_count = as_float(source.get("product_instance_count"), 1.0)
+    target_count = as_float(target.get("product_instance_count"), 1.0)
     source_present = pair_confirms_source_product_present(pair, args)
     descriptive_text = " ".join(
         str(value or "")
@@ -1218,6 +1228,8 @@ def target_complexity_reasons(source: dict, target: dict, pair: dict, args) -> l
         reasons.append("target_has_multiple_product_views")
     if as_bool(target.get("has_color_or_variant_swatches")):
         reasons.append("target_has_color_or_variant_swatches")
+    if not args.allow_multi_product_targets and target_count > max(source_count, args.max_target_product_instance_count):
+        reasons.append("target_product_count_exceeds_source")
     if not source_present and re.search(
         r"\b(multiple views?|multi[- ]?view|variant comparison|color comparison|"
         r"swatches?|swatch board|shade chart|color chart|product grid|several product views|"
@@ -1263,7 +1275,9 @@ def target_complexity_reasons(source: dict, target: dict, pair: dict, args) -> l
         r"dense (German )?(quality[- ]text|copy|body copy|text) panels?|quality[- ]promise panel|"
         r"German quality[- ]text panels?|back[- ]of[- ]pack style|back of pack style|"
         r"directions?/ingredients? panel|ingredient/directions text|dense information panel|"
-        r"front package/source image converted into .{0,40}(back|rear|side|information view))\b",
+        r"front package/source image converted into .{0,40}(back|rear|side|information view)|"
+        r"welcome to the .{0,40}tradition|about .{0,30}(aloe|brand)|"
+        r"capacity|net weight|certification|msds|fda|suitable lamp)\b",
         descriptive_text,
         re.I,
     ):
@@ -1309,7 +1323,6 @@ def postprocess_annotation(annotation: dict, args) -> tuple[dict, list[dict]]:
         "main_to_lifestyle",
         "main_to_detail",
         "angle_to_ad",
-        "bad_or_uncertain",
     }
     if args.allow_infographic_pairs:
         allowed_pair_types.add("main_to_infographic")
