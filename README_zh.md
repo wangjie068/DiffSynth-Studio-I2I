@@ -34,6 +34,19 @@ DiffSynth 目前包括两个开源项目：
 
 > 目前本项目的开发人员有限，大部分工作由 [Artiprocher](https://github.com/Artiprocher) 和 [mi804](https://github.com/mi804) 负责，因此新功能的开发进展会比较缓慢，issue 的回复和解决速度有限，我们对此感到非常抱歉，请各位开发者理解。
 
+- **2026年6月29日** Boogu-Image 开源，已支持文生图推理、图像编辑、低显存推理和训练能力。详情请参考[文档](/docs/zh/Model_Details/Boogu-Image.md)和[示例代码](/examples/boogu_image/)。
+
+- **2026年6月24日** Krea-2 开源，我们已提供全面支持。详情请参考[文档](/docs/zh/Model_Details/Krea-2.md)和[示例代码](/examples/krea2/)。
+
+- **2026年6月16日** 我们为 ACE-Step 新增了 Template 模型：[vocals2music](https://www.modelscope.cn/models/DiffSynth-Studio/acestep15xlsft-vocals2music)。详情请参考[文档](/docs/zh/Model_Details/ACE-Step.md)和[示例代码](/examples/ace_step/)。
+
+- **2026年6月15日** 我们开源了 Image-to-LoRA V2，将动辄数小时的图像风格 LoRA 训练压缩到一次模型推理中，探索 LoRA 模型训练的新方式。[技术报告](https://arxiv.org/abs/2606.13809)已公开，本次开源包括三个模型：
+    * [DiffSynth-Studio/ZImage-i2L-v2](https://modelscope.cn/models/DiffSynth-Studio/ZImage-i2L-v2)：适配模型 Z-Image
+    * [DiffSynth-Studio/KleinBase4B-i2L-v2](https://modelscope.cn/models/DiffSynth-Studio/KleinBase4B-i2L-v2)：适配模型 FLUX.2-klein-base-4B
+    * [DiffSynth-Studio/HidreamO1-i2L-v2](https://modelscope.cn/models/DiffSynth-Studio/HidreamO1-i2L-v2)：适配模型 Hidream-O1-Image
+
+- **2026年6月5日** Ideogram 4 开源，已支持文生图推理。详情请参考[文档](/docs/zh/Model_Details/Ideogram-4.md)和[示例代码](/examples/ideogram4/)。
+
 - **2026年5月21日** 新增图像质量评估模型的支持，包括 FID、CLIP、Aesthetic、PickScore、ImageReward、HPSv2、HPSv3，详情请参考[文档](/docs/zh/Model_Details/Image-Quality-Metrics.md)和[示例代码](/examples/image_quality_metric/)
 
 - **2026年5月18日** 新增 **CPU Offload Training** 功能，通过将模型权重逐层在 CPU 与 GPU 之间搬运，大幅降低训练时的 GPU 显存占用，让消费级显卡也能进行大模型 LoRA 训练，适配所有模型。只需在训练命令中添加 `--enable_model_cpu_offload` 即可启用（当前仅支持单卡训练）。详情请参考[文档](/docs/zh/Training/Offload_Training.md)。
@@ -315,6 +328,7 @@ Z-Image 的示例代码位于：[/examples/z_image/](/examples/z_image/)
 |[PAI/Z-Image-Turbo-Fun-Controlnet-Union-2.1](https://www.modelscope.cn/models/PAI/Z-Image-Turbo-Fun-Controlnet-Union-2.1)|[code](/examples/z_image/model_inference/Z-Image-Turbo-Fun-Controlnet-Union-2.1.py)|[code](/examples/z_image/model_inference_low_vram/Z-Image-Turbo-Fun-Controlnet-Union-2.1.py)|[code](/examples/z_image/model_training/full/Z-Image-Turbo-Fun-Controlnet-Union-2.1.sh)|[code](/examples/z_image/model_training/validate_full/Z-Image-Turbo-Fun-Controlnet-Union-2.1.py)|[code](/examples/z_image/model_training/lora/Z-Image-Turbo-Fun-Controlnet-Union-2.1.sh)|[code](/examples/z_image/model_training/validate_lora/Z-Image-Turbo-Fun-Controlnet-Union-2.1.py)|
 |[PAI/Z-Image-Turbo-Fun-Controlnet-Union-2.1-8steps](https://www.modelscope.cn/models/PAI/Z-Image-Turbo-Fun-Controlnet-Union-2.1)|[code](/examples/z_image/model_inference/Z-Image-Turbo-Fun-Controlnet-Union-2.1-8steps.py)|[code](/examples/z_image/model_inference_low_vram/Z-Image-Turbo-Fun-Controlnet-Union-2.1-8steps.py)|[code](/examples/z_image/model_training/full/Z-Image-Turbo-Fun-Controlnet-Union-2.1-8steps.sh)|[code](/examples/z_image/model_training/validate_full/Z-Image-Turbo-Fun-Controlnet-Union-2.1-8steps.py)|[code](/examples/z_image/model_training/lora/Z-Image-Turbo-Fun-Controlnet-Union-2.1-8steps.sh)|[code](/examples/z_image/model_training/validate_lora/Z-Image-Turbo-Fun-Controlnet-Union-2.1-8steps.py)|
 |[PAI/Z-Image-Turbo-Fun-Controlnet-Tile-2.1-8steps](https://www.modelscope.cn/models/PAI/Z-Image-Turbo-Fun-Controlnet-Union-2.1)|[code](/examples/z_image/model_inference/Z-Image-Turbo-Fun-Controlnet-Tile-2.1-8steps.py)|[code](/examples/z_image/model_inference_low_vram/Z-Image-Turbo-Fun-Controlnet-Tile-2.1-8steps.py)|[code](/examples/z_image/model_training/full/Z-Image-Turbo-Fun-Controlnet-Tile-2.1-8steps.sh)|[code](/examples/z_image/model_training/validate_full/Z-Image-Turbo-Fun-Controlnet-Tile-2.1-8steps.py)|[code](/examples/z_image/model_training/lora/Z-Image-Turbo-Fun-Controlnet-Tile-2.1-8steps.sh)|[code](/examples/z_image/model_training/validate_lora/Z-Image-Turbo-Fun-Controlnet-Tile-2.1-8steps.py)|
+|[DiffSynth-Studio/ZImage-i2L-v2](https://www.modelscope.cn/models/DiffSynth-Studio/ZImage-i2L-v2)|[code](/examples/z_image/model_inference/ZImage-i2L-v2.py)|[code](/examples/z_image/model_inference_low_vram/ZImage-i2L-v2.py)|[code](/examples/z_image/model_training/full/ZImage-i2L-v2.sh)|[code](/examples/z_image/model_training/validate_full/ZImage-i2L-v2.py)|-|-|
 
 </details>
 
@@ -505,6 +519,7 @@ FLUX.2 的示例代码位于：[/examples/flux2/](/examples/flux2/)
 |[DiffSynth-Studio/Template-KleinBase4B-SoftRGB](https://www.modelscope.cn/models/DiffSynth-Studio/Template-KleinBase4B-SoftRGB)|[code](/examples/flux2/model_inference/Template-KleinBase4B-SoftRGB.py)|[code](/examples/flux2/model_inference_low_vram/Template-KleinBase4B-SoftRGB.py)|[code](/examples/flux2/model_training/full/Template-KleinBase4B-SoftRGB.sh)|[code](/examples/flux2/model_training/validate_full/Template-KleinBase4B-SoftRGB.py)|-|-|
 |[DiffSynth-Studio/Template-KleinBase4B-Upscaler](https://www.modelscope.cn/models/DiffSynth-Studio/Template-KleinBase4B-Upscaler)|[code](/examples/flux2/model_inference/Template-KleinBase4B-Upscaler.py)|[code](/examples/flux2/model_inference_low_vram/Template-KleinBase4B-Upscaler.py)|[code](/examples/flux2/model_training/full/Template-KleinBase4B-Upscaler.sh)|[code](/examples/flux2/model_training/validate_full/Template-KleinBase4B-Upscaler.py)|-|-|
 |[DiffSynth-Studio/Template-KleinBase4B-ContentRef](https://www.modelscope.cn/models/DiffSynth-Studio/Template-KleinBase4B-ContentRef)|[code](/examples/flux2/model_inference/Template-KleinBase4B-ContentRef.py)|[code](/examples/flux2/model_inference_low_vram/Template-KleinBase4B-ContentRef.py)|[code](/examples/flux2/model_training/full/Template-KleinBase4B-ContentRef.sh)|[code](/examples/flux2/model_training/validate_full/Template-KleinBase4B-ContentRef.py)|-|-|
+|[DiffSynth-Studio/KleinBase4B-i2L-v2](https://www.modelscope.cn/models/DiffSynth-Studio/KleinBase4B-i2L-v2)|[code](/examples/flux2/model_inference/KleinBase4B-i2L-v2.py)|[code](/examples/flux2/model_inference_low_vram/KleinBase4B-i2L-v2.py)|[code](/examples/flux2/model_training/full/KleinBase4B-i2L-v2.sh)|[code](/examples/flux2/model_training/validate_full/KleinBase4B-i2L-v2.py)|-|-|
 
 </details>
 
@@ -949,6 +964,202 @@ HiDream-O1-Image 的示例代码位于：[/examples/hidream_o1_image/](/examples
 |-|-|-|-|-|-|-|
 |[HiDream-ai/HiDream-O1-Image](https://modelscope.cn/models/HiDream-ai/HiDream-O1-Image)|[code](/examples/hidream_o1_image/model_inference/HiDream-O1-Image.py)|[code](/examples/hidream_o1_image/model_inference_low_vram/HiDream-O1-Image.py)|[code](/examples/hidream_o1_image/model_training/full/HiDream-O1-Image.sh)|[code](/examples/hidream_o1_image/model_training/validate_full/HiDream-O1-Image.py)|[code](/examples/hidream_o1_image/model_training/lora/HiDream-O1-Image.sh)|[code](/examples/hidream_o1_image/model_training/validate_lora/HiDream-O1-Image.py)|
 |[HiDream-ai/HiDream-O1-Image-Dev](https://modelscope.cn/models/HiDream-ai/HiDream-O1-Image-Dev)|[code](/examples/hidream_o1_image/model_inference/HiDream-O1-Image-Dev.py)|[code](/examples/hidream_o1_image/model_inference_low_vram/HiDream-O1-Image-Dev.py)|[code](/examples/hidream_o1_image/model_training/full/HiDream-O1-Image-Dev.sh)|[code](/examples/hidream_o1_image/model_training/validate_full/HiDream-O1-Image-Dev.py)|[code](/examples/hidream_o1_image/model_training/lora/HiDream-O1-Image-Dev.sh)|[code](/examples/hidream_o1_image/model_training/validate_lora/HiDream-O1-Image-Dev.py)|
+|[DiffSynth-Studio/HidreamO1-i2L-v2](https://www.modelscope.cn/models/DiffSynth-Studio/HidreamO1-i2L-v2)|[code](/examples/hidream_o1_image/model_inference/HidreamO1-i2L-v2.py)|[code](/examples/hidream_o1_image/model_inference_low_vram/HidreamO1-i2L-v2.py)|[code](/examples/hidream_o1_image/model_training/full/HidreamO1-i2L-v2.sh)|[code](/examples/hidream_o1_image/model_training/validate_full/HidreamO1-i2L-v2.py)|-|-|
+
+</details>
+
+#### Ideogram 4：[/docs/zh/Model_Details/Ideogram-4.md](/docs/zh/Model_Details/Ideogram-4.md)
+
+<details>
+
+<summary>快速开始</summary>
+
+运行以下代码可以快速加载 [ideogram-ai/ideogram-4-fp8](https://www.modelscope.cn/models/ideogram-ai/ideogram-4-fp8) 模型并进行推理。最低 24G 显存即可运行。
+
+```python
+from diffsynth.pipelines.ideogram4 import Ideogram4Pipeline
+from diffsynth.core import ModelConfig
+import torch
+
+
+pipe = Ideogram4Pipeline.from_pretrained(
+    torch_dtype=torch.bfloat16,
+    device="cuda",
+    model_configs=[
+        ModelConfig(model_id="ideogram-ai/ideogram-4-fp8", origin_file_pattern="transformer/diffusion_pytorch_model.safetensors"),
+        # unconditional_transformer is optional. You can delete this line to reduce VRAM required.
+        ModelConfig(model_id="ideogram-ai/ideogram-4-fp8", origin_file_pattern="unconditional_transformer/diffusion_pytorch_model.safetensors"),
+        ModelConfig(model_id="ideogram-ai/ideogram-4-fp8", origin_file_pattern="text_encoder/model.safetensors"),
+        ModelConfig(model_id="ideogram-ai/ideogram-4-fp8", origin_file_pattern="vae/diffusion_pytorch_model.safetensors"),
+    ],
+    tokenizer_config=ModelConfig(model_id="ideogram-ai/ideogram-4-fp8", origin_file_pattern="tokenizer/"),
+)
+prompt = r"""
+{
+  "high_level_description": "A medium-shot photograph of Formula 1 driver Max Verstappen wearing his Red Bull Racing racing suit and cap, smiling as he holds his racing helmet and talks to a man in a white shirt and black vest at a race track.",
+  "style_description": {
+    "aesthetics": "saturated primary colors, rule of thirds, joyful and triumphant",
+    "lighting": "overcast daylight, diffused, soft subtle shadows",
+    "photo": "shallow depth of field, sharp focus, eye-level, telephoto",
+    "medium": "photograph"
+  },
+  "compositional_deconstruction": {
+    "background": "The background is an out-of-focus racing paddock or track environment. Several blurred figures are visible, including one in an orange shirt. A purple and white structure with a red 'F1' logo stands on the left. The scene is outdoors with daylight, though the sky is not visible.",
+    "elements": [
+      {"type": "obj", "bbox": [55, 642, 1000, 937], "desc": "An older man standing in profile, facing left toward Max Verstappen. He has grey hair and fair skin. He is wearing a white long-sleeved button-down shirt with a navy blue quilted vest over it. He has a slight smile."},
+      {"type": "obj", "bbox": [34, 137, 1000, 617], "desc": "Max Verstappen, a fair-skinned male Formula 1 driver, positioned in the center. He is facing forward with a joyful expression and a slight smile. He wears a navy blue Red Bull Racing team uniform with numerous sponsor logos and a matching baseball cap with the number '1'. He is holding a white and red racing helmet in his hands. He has a silver watch on his left wrist."},
+      {"type": "obj", "bbox": [422, 212, 792, 452], "desc": "Max Verstappen's racing helmet, held in front of his chest. It features a white, red, and yellow design with the Red Bull logo and the 'Player 0.0' branding. The visor is clear and open."},
+      {"type": "text", "bbox": [657, 0, 755, 142], "text": "F1", "desc": "Large, stylized red logo on a black and purple background in the lower left."},
+      {"type": "text", "bbox": [768, 0, 818, 147], "text": "Formula 1\nWorld Championship™", "desc": "Small white sans-serif text below the F1 logo on the left side."},
+      {"type": "text", "bbox": [78, 447, 117, 510], "text": "ORACLE\nRed Bull\nRacing", "desc": "Very small white and orange logo on the front of the navy blue cap."},
+      {"type": "text", "bbox": [78, 417, 120, 440], "text": "1", "desc": "Bold red numeral '1' on the front left side of the navy blue cap."},
+      {"type": "text", "bbox": [332, 442, 363, 483], "text": "Red Bull", "desc": "Small yellow and red text logo on the collar of the uniform."},
+      {"type": "text", "bbox": [373, 490, 423, 532], "text": "RAUCH", "desc": "Small yellow and blue logo on the right chest of the uniform."},
+      {"type": "text", "bbox": [422, 473, 500, 532], "text": "BYBIT\nHONDA", "desc": "Medium-sized white sans-serif text on the right chest of the uniform."},
+      {"type": "text", "bbox": [410, 203, 442, 257], "text": "RAUCH", "desc": "Small yellow logo on the left upper arm of the uniform."},
+      {"type": "text", "bbox": [530, 448, 627, 510], "text": "Red Bull", "desc": "Medium red text logo on the right side of the torso, part of the Red Bull graphic."},
+      {"type": "text", "bbox": [680, 417, 768, 523], "text": "Red Bull", "desc": "Large red text logo across the lower torso of the uniform."},
+      {"type": "text", "bbox": [797, 475, 815, 518], "text": "MAX", "desc": "Small white text next to a Dutch flag on the belt area of the uniform."},
+      {"type": "text", "bbox": [558, 317, 715, 355], "text": "Player 0.0", "desc": "Black sans-serif text on a white band on the racing helmet."},
+      {"type": "text", "bbox": [560, 800, 582, 835], "text": "IA.COM", "desc": "Small blue sans-serif text on the right sleeve of the white shirt."},
+      {"type": "text", "bbox": [968, 8, 997, 332], "text": "© Anadolu Agency via Getty Images", "desc": "Small white watermark text in the bottom left corner."}
+    ]
+  }
+}
+"""
+image = pipe(prompt=prompt, height=1024, width=1024, num_inference_steps=48, cfg_scale=7.0, seed=42)
+image.save("image_ideogram-4-fp8.jpg")
+```
+
+</details>
+
+<details>
+
+<summary>示例代码</summary>
+
+Ideogram 4 的示例代码位于：[/examples/ideogram4/](/examples/ideogram4/)
+
+| 模型 ID | 推理 | 低显存推理 | 全量训练 | 全量训练后验证 | LoRA 训练 | LoRA 训练后验证 |
+|-|-|-|-|-|-|-|
+|[ideogram-ai/ideogram-4-fp8](https://www.modelscope.cn/models/ideogram-ai/ideogram-4-fp8)|[code](/examples/ideogram4/model_inference/ideogram-4-fp8.py)|-|-|-|-|-|
+|[DiffSynth-Studio/ideogram-4-bf16-repackage](https://www.modelscope.cn/models/DiffSynth-Studio/ideogram-4-bf16-repackage)|[code](/examples/ideogram4/model_inference/ideogram-4-bf16-repackage.py)|[code](/examples/ideogram4/model_inference_low_vram/ideogram-4-bf16-repackage.py)|[code](/examples/ideogram4/model_training/full/Ideogram-4-bf16-repackage.sh)|-|[code](/examples/ideogram4/model_training/lora/Ideogram-4-bf16-repackage.sh)|[code](/examples/ideogram4/model_training/validate_lora/Ideogram-4-bf16-repackage.py)|
+
+</details>
+
+#### Krea-2: [/docs/zh/Model_Details/Krea-2.md](/docs/zh/Model_Details/Krea-2.md)
+
+<details>
+
+<summary>快速开始</summary>
+
+运行以下代码可以快速加载 [krea/Krea-2-Raw](https://www.modelscope.cn/models/krea/Krea-2-Raw) 模型并进行推理。显存管理已启动，框架会自动根据剩余显存控制模型参数的加载，最低 24G 显存即可运行。
+
+```python
+from diffsynth.pipelines.krea2 import Krea2Pipeline, ModelConfig
+import torch
+
+vram_config = {
+    "offload_dtype": "disk",
+    "offload_device": "disk",
+    "onload_dtype": torch.float8_e4m3fn,
+    "onload_device": "cpu",
+    "preparing_dtype": torch.float8_e4m3fn,
+    "preparing_device": "cuda",
+    "computation_dtype": torch.bfloat16,
+    "computation_device": "cuda",
+}
+pipe = Krea2Pipeline.from_pretrained(
+    torch_dtype=torch.bfloat16,
+    device="cuda",
+    model_configs=[
+        ModelConfig(model_id="krea/Krea-2-Raw", origin_file_pattern="raw.safetensors", **vram_config),
+        ModelConfig(model_id="Qwen/Qwen3-VL-4B-Instruct", origin_file_pattern="*.safetensors", **vram_config),
+        ModelConfig(model_id="Qwen/Qwen-Image", origin_file_pattern="vae/diffusion_pytorch_model.safetensors", **vram_config),
+    ],
+    tokenizer_config=ModelConfig(model_id="Qwen/Qwen3-VL-4B-Instruct", origin_file_pattern=""),
+    vram_limit=torch.cuda.mem_get_info("cuda")[1] / (1024 ** 3) - 1,
+)
+prompt = "A cat standing on a stone."
+image = pipe(prompt, seed=0, num_inference_steps=52, cfg_scale=4.5)
+image.save("image.jpg")
+```
+
+</details>
+
+<details>
+
+<summary>示例代码</summary>
+
+Krea-2 的示例代码位于：[/examples/krea2/](/examples/krea2/)
+
+| 模型 ID | 推理 | 低显存推理 | 全量训练 | 全量训练后验证 | LoRA 训练 | LoRA 训练后验证 |
+|-|-|-|-|-|-|-|
+|[krea/Krea-2-Raw](https://www.modelscope.cn/models/krea/Krea-2-Raw)|[code](/examples/krea2/model_inference/Krea-2-Raw.py)|[code](/examples/krea2/model_inference_low_vram/Krea-2-Raw.py)|[code](/examples/krea2/model_training/full/Krea-2-Raw.sh)|[code](/examples/krea2/model_training/validate_full/Krea-2-Raw.py)|[code](/examples/krea2/model_training/lora/Krea-2-Raw.sh)|[code](/examples/krea2/model_training/validate_lora/Krea-2-Raw.py)|
+|[krea/Krea-2-Turbo](https://www.modelscope.cn/models/krea/Krea-2-Turbo)|[code](/examples/krea2/model_inference/Krea-2-Turbo.py)|[code](/examples/krea2/model_inference_low_vram/Krea-2-Turbo.py)|[code](/examples/krea2/model_training/full/Krea-2-Turbo.sh)|[code](/examples/krea2/model_training/validate_full/Krea-2-Turbo.py)|[code](/examples/krea2/model_training/lora/Krea-2-Turbo.sh)|[code](/examples/krea2/model_training/validate_lora/Krea-2-Turbo.py)|
+
+</details>
+
+#### Boogu-Image：[/docs/zh/Model_Details/Boogu-Image.md](/docs/zh/Model_Details/Boogu-Image.md)
+
+<details>
+
+<summary>快速开始</summary>
+
+运行以下代码可以快速加载 [Boogu/Boogu-Image-0.1-Base](https://modelscope.cn/models/Boogu/Boogu-Image-0.1-Base) 模型并进行推理。显存管理已启动，框架会自动根据剩余显存控制模型参数的加载，最低 8G 显存即可运行。
+
+```python
+from diffsynth.pipelines.boogu_image import BooguImagePipeline, ModelConfig
+import torch
+
+
+vram_config = {
+    "offload_dtype": torch.float8_e4m3fn,
+    "offload_device": "cpu",
+    "onload_dtype": torch.float8_e4m3fn,
+    "onload_device": "cpu",
+    "preparing_dtype": torch.float8_e4m3fn,
+    "preparing_device": "cuda",
+    "computation_dtype": torch.bfloat16,
+    "computation_device": "cuda",
+}
+
+pipe = BooguImagePipeline.from_pretrained(
+    torch_dtype=torch.bfloat16,
+    device="cuda",
+    model_configs=[
+        ModelConfig(model_id="Boogu/Boogu-Image-0.1-Base", origin_file_pattern="transformer/*.safetensors", **vram_config),
+        ModelConfig(model_id="Boogu/Boogu-Image-0.1-Base", origin_file_pattern="mllm/*.safetensors", **vram_config),
+        ModelConfig(model_id="Boogu/Boogu-Image-0.1-Base", origin_file_pattern="vae/*.safetensors", **vram_config),
+    ],
+    processor_config=ModelConfig(model_id="Boogu/Boogu-Image-0.1-Base", origin_file_pattern="mllm/"),
+    vram_limit=torch.cuda.mem_get_info("cuda")[1] / (1024 ** 3) - 0.5,
+)
+
+output = pipe(
+    prompt="a cat",
+    negative_prompt="",
+    height=1024,
+    width=1024,
+    seed=42,
+    num_inference_steps=50,
+    cfg_scale=4.0,
+)
+output.save("image_Boogu-Image-0.1-Base.jpg")
+```
+
+</details>
+
+<details>
+
+<summary>示例代码</summary>
+
+Boogu-Image 的示例代码位于：[/examples/boogu_image/](/examples/boogu_image/)
+
+|模型 ID|推理|低显存推理|全量训练|全量训练后验证|LoRA 训练|LoRA 训练后验证|
+|-|-|-|-|-|-|-|
+|[Boogu/Boogu-Image-0.1-Base](https://modelscope.cn/models/Boogu/Boogu-Image-0.1-Base)|[code](/examples/boogu_image/model_inference/Boogu-Image-0.1-Base.py)|[code](/examples/boogu_image/model_inference_low_vram/Boogu-Image-0.1-Base.py)|[code](/examples/boogu_image/model_training/full/Boogu-Image-0.1-Base.sh)|[code](/examples/boogu_image/model_training/validate_full/Boogu-Image-0.1-Base.py)|[code](/examples/boogu_image/model_training/lora/Boogu-Image-0.1-Base.sh)|[code](/examples/boogu_image/model_training/validate_lora/Boogu-Image-0.1-Base.py)|
+|[Boogu/Boogu-Image-0.1-Turbo](https://modelscope.cn/models/Boogu/Boogu-Image-0.1-Turbo)|[code](/examples/boogu_image/model_inference/Boogu-Image-0.1-Turbo.py)|[code](/examples/boogu_image/model_inference_low_vram/Boogu-Image-0.1-Turbo.py)|[code](/examples/boogu_image/model_training/full/Boogu-Image-0.1-Turbo.sh)|[code](/examples/boogu_image/model_training/validate_full/Boogu-Image-0.1-Turbo.py)|[code](/examples/boogu_image/model_training/lora/Boogu-Image-0.1-Turbo.sh)|[code](/examples/boogu_image/model_training/validate_lora/Boogu-Image-0.1-Turbo.py)|
+|[Boogu/Boogu-Image-0.1-Edit](https://modelscope.cn/models/Boogu/Boogu-Image-0.1-Edit)|[code](/examples/boogu_image/model_inference/Boogu-Image-0.1-Edit.py)|[code](/examples/boogu_image/model_inference_low_vram/Boogu-Image-0.1-Edit.py)|[code](/examples/boogu_image/model_training/full/Boogu-Image-0.1-Edit.sh)|[code](/examples/boogu_image/model_training/validate_full/Boogu-Image-0.1-Edit.py)|[code](/examples/boogu_image/model_training/lora/Boogu-Image-0.1-Edit.sh)|[code](/examples/boogu_image/model_training/validate_lora/Boogu-Image-0.1-Edit.py)|
 
 </details>
 
@@ -1064,6 +1275,7 @@ LTX-2 的示例代码位于：[/examples/ltx2/](/examples/ltx2/)
 
 |模型 ID|额外参数|推理|低显存推理|全量训练|全量训练后验证|LoRA 训练|LoRA 训练后验证|
 |-|-|-|-|-|-|-|-|
+|[jd-opensource/JoyAI-Echo](https://modelscope.cn/models/jd-opensource/JoyAI-Echo)||[code](/examples/ltx2/model_inference/JoyAI-Echo-T2AV.py)|[code](/examples/ltx2/model_inference_low_vram/JoyAI-Echo-T2AV.py)|[code](/examples/ltx2/model_training/full/JoyAI-Echo-T2AV-splited.sh)|[code](/examples/ltx2/model_training/validate_full/JoyAI-Echo-T2AV.py)|[code](/examples/ltx2/model_training/lora/JoyAI-Echo-T2AV-splited.sh)|[code](/examples/ltx2/model_training/validate_lora/JoyAI-Echo-T2AV.py)|
 |[Lightricks/LTX-2.3: OneStagePipeline-I2AV](https://www.modelscope.cn/models/Lightricks/LTX-2.3)|`input_images`|[code](/examples/ltx2/model_inference/LTX-2.3-I2AV-OneStage.py)|[code](/examples/ltx2/model_inference_low_vram/LTX-2.3-I2AV-OneStage.py)|[code](/examples/ltx2/model_training/full/LTX-2.3-I2AV-splited.sh)|[code](/examples/ltx2/model_training/validate_full/LTX-2.3-I2AV.py)|[code](/examples/ltx2/model_training/lora/LTX-2.3-I2AV-splited.sh)|[code](/examples/ltx2/model_training/validate_lora/LTX-2.3-I2AV.py)|
 |[Lightricks/LTX-2.3: TwoStagePipeline-I2AV](https://www.modelscope.cn/models/Lightricks/LTX-2.3)|`input_images`|[code](/examples/ltx2/model_inference/LTX-2.3-I2AV-TwoStage.py)|[code](/examples/ltx2/model_inference_low_vram/LTX-2.3-I2AV-TwoStage.py)|-|-|-|-|
 |[Lightricks/LTX-2.3: DistilledPipeline-I2AV](https://www.modelscope.cn/models/Lightricks/LTX-2.3)|`input_images`|[code](/examples/ltx2/model_inference/LTX-2.3-I2AV-DistilledPipeline.py)|[code](/examples/ltx2/model_inference_low_vram/LTX-2.3-I2AV-DistilledPipeline.py)|-|-|-|-|
@@ -1308,6 +1520,7 @@ ACE-Step 的示例代码位于：[/examples/ace_step/](/examples/ace_step/)
 |[ACE-Step/acestep-v15-xl-base](https://www.modelscope.cn/models/ACE-Step/acestep-v15-xl-base)|[code](/examples/ace_step/model_inference/acestep-v15-xl-base.py)|[code](/examples/ace_step/model_inference_low_vram/acestep-v15-xl-base.py)|[code](/examples/ace_step/model_training/full/acestep-v15-xl-base.sh)|[code](/examples/ace_step/model_training/validate_full/acestep-v15-xl-base.py)|[code](/examples/ace_step/model_training/lora/acestep-v15-xl-base.sh)|[code](/examples/ace_step/model_training/validate_lora/acestep-v15-xl-base.py)|
 |[ACE-Step/acestep-v15-xl-sft](https://www.modelscope.cn/models/ACE-Step/acestep-v15-xl-sft)|[code](/examples/ace_step/model_inference/acestep-v15-xl-sft.py)|[code](/examples/ace_step/model_inference_low_vram/acestep-v15-xl-sft.py)|[code](/examples/ace_step/model_training/full/acestep-v15-xl-sft.sh)|[code](/examples/ace_step/model_training/validate_full/acestep-v15-xl-sft.py)|[code](/examples/ace_step/model_training/lora/acestep-v15-xl-sft.sh)|[code](/examples/ace_step/model_training/validate_lora/acestep-v15-xl-sft.py)|
 |[ACE-Step/acestep-v15-xl-turbo](https://www.modelscope.cn/models/ACE-Step/acestep-v15-xl-turbo)|[code](/examples/ace_step/model_inference/acestep-v15-xl-turbo.py)|[code](/examples/ace_step/model_inference_low_vram/acestep-v15-xl-turbo.py)|[code](/examples/ace_step/model_training/full/acestep-v15-xl-turbo.sh)|[code](/examples/ace_step/model_training/validate_full/acestep-v15-xl-turbo.py)|[code](/examples/ace_step/model_training/lora/acestep-v15-xl-turbo.sh)|[code](/examples/ace_step/model_training/validate_lora/acestep-v15-xl-turbo.py)|
+|[DiffSynth-Studio/acestep15xlsft-lora-music](https://www.modelscope.cn/models/DiffSynth-Studio/acestep15xlsft-lora-music)|[code](/examples/ace_step/model_inference/acestep15xlsft-vocals2music.py)|[code](/examples/ace_step/model_inference_low_vram/acestep15xlsft-vocals2music.py)|[code](/examples/ace_step/model_training/full/acestep15xlsft-vocals2music.sh)|[code](/examples/ace_step/model_training/validate_full/acestep15xlsft-vocals2music.py)|-|-|
 
 </details>
 
