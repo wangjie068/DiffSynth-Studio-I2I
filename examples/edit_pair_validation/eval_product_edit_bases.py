@@ -43,12 +43,20 @@ def fit_size(width, height, max_pixels):
     return width, height
 
 
-def download_image(url, path, timeout):
+def download_image(url, path, timeout, retries=2):
     if path.exists():
         return
     request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
-    with urllib.request.urlopen(request, timeout=timeout) as response:
-        raw = response.read()
+    last_error = None
+    for _ in range(retries + 1):
+        try:
+            with urllib.request.urlopen(request, timeout=timeout) as response:
+                raw = response.read()
+            break
+        except Exception as error:
+            last_error = error
+    else:
+        raise last_error
     path.parent.mkdir(parents=True, exist_ok=True)
     Image.open(BytesIO(raw)).convert("RGB").save(path, quality=95)
 
@@ -205,13 +213,21 @@ def main():
     args.output_dir.mkdir(parents=True, exist_ok=True)
     records = read_records(args.metadata)
     random.Random(args.sample_seed).shuffle(records)
-    records = records[: args.limit]
 
-    cases = [
-        materialize_case(record, index, args.image_root, args.output_dir, args.timeout)
-        for index, record in enumerate(records)
-    ]
+    cases = []
+    skipped_cases = []
+    for record in records:
+        if len(cases) >= args.limit:
+            break
+        try:
+            cases.append(materialize_case(record, len(cases), args.image_root, args.output_dir, args.timeout))
+        except Exception as error:
+            skipped_cases.append({"pair_id": pair_id_of(record, len(cases)), "error": str(error)})
+            print(f"skip case {pair_id_of(record, len(cases))}: {error}")
     (args.output_dir / "cases.json").write_text(json.dumps(cases, ensure_ascii=False, indent=2), encoding="utf-8")
+    (args.output_dir / "skipped_cases.json").write_text(json.dumps(skipped_cases, ensure_ascii=False, indent=2), encoding="utf-8")
+    if not cases:
+        raise RuntimeError("No cases were materialized. Use downloaded metadata.json or increase --timeout.")
 
     models = [item.strip() for item in args.models.split(",") if item.strip()]
     failures = []
