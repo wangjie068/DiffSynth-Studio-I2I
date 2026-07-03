@@ -14,7 +14,7 @@ from pathlib import Path
 from PIL import Image, ImageDraw
 
 
-DEFAULT_BASE_URL = "https://aidp-i18ntt-sg.tiktok-row.net/gpt/openapi/online/v2/crawl/openai"
+DEFAULT_BASE_URL = "https://gpt-i18n.byteintl.net/gpt/openapi/online/v2/crawl/openai"
 DEFAULT_MODELS_FOR_SHEET = "qwen2511,qwen2511_lora,hidream_o1,flux2kleinbase9b,firered11,gpt_image"
 
 
