@@ -89,15 +89,16 @@ def materialize_case(record, index, image_root, output_dir, timeout):
     }
 
 
-def load_pipe(model):
-    if model in {"qwen2511", "firered11"}:
+def load_pipe(model, qwen_lora_path=None):
+    if model in {"qwen2511", "qwen2511_lora", "firered11"}:
         from diffsynth.pipelines.qwen_image import ModelConfig, QwenImagePipeline
 
         model_id = {
             "qwen2511": "Qwen/Qwen-Image-Edit-2511",
+            "qwen2511_lora": "Qwen/Qwen-Image-Edit-2511",
             "firered11": "FireRedTeam/FireRed-Image-Edit-1.1",
         }[model]
-        return QwenImagePipeline.from_pretrained(
+        pipe = QwenImagePipeline.from_pretrained(
             torch_dtype=torch.bfloat16,
             device="cuda",
             model_configs=[
@@ -107,6 +108,11 @@ def load_pipe(model):
             ],
             processor_config=ModelConfig(model_id="Qwen/Qwen-Image-Edit", origin_file_pattern="processor/"),
         )
+        if model == "qwen2511_lora":
+            if qwen_lora_path is None:
+                raise ValueError("--qwen-lora-path is required for qwen2511_lora")
+            pipe.load_lora(pipe.dit, str(qwen_lora_path))
+        return pipe
     if model == "flux2kleinbase9b":
         from diffsynth.pipelines.flux2_image import Flux2ImagePipeline, ModelConfig
 
@@ -153,7 +159,7 @@ def infer(pipe, model, case, steps, seed, max_pixels):
     target = Image.open(case["target"]).convert("RGB")
     width, height = fit_size(*target.size, max_pixels=max_pixels)
     prompt = case["prompt"]
-    if model == "qwen2511":
+    if model in {"qwen2511", "qwen2511_lora"}:
         return pipe(
             prompt,
             edit_image=[source],
@@ -255,6 +261,7 @@ def main():
     parser.add_argument("--steps", type=int, default=30)
     parser.add_argument("--max-pixels", type=int, default=1048576)
     parser.add_argument("--timeout", type=float, default=30)
+    parser.add_argument("--qwen-lora-path", type=Path, default=Path("models/train/product_consistency_qwen_edit_2511_lora_v1/step-1156.safetensors"))
     args = parser.parse_args()
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
@@ -281,7 +288,7 @@ def main():
     for model in models:
         out_dir = args.output_dir / "outputs" / model
         out_dir.mkdir(parents=True, exist_ok=True)
-        pipe = load_pipe(model)
+        pipe = load_pipe(model, args.qwen_lora_path)
         for case in cases:
             out_path = out_dir / f"{case['index']:03d}.jpg"
             if out_path.exists():
