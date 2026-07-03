@@ -4,6 +4,7 @@ import base64
 import json
 import os
 import secrets
+import ssl
 import time
 import urllib.error
 import urllib.request
@@ -55,7 +56,7 @@ def image_content_type(path):
     return "application/octet-stream"
 
 
-def post_edit(base_url, api_key, case, model, quality, size, timeout):
+def post_edit(base_url, api_key, case, model, quality, size, timeout, ssl_context):
     source_path = Path(case["source"])
     body, content_type = encode_multipart(
         fields=[
@@ -80,7 +81,7 @@ def post_edit(base_url, api_key, case, model, quality, size, timeout):
             "X-TT-LOGID": f"product-gpt-image-{case['index']:03d}-{int(time.time())}",
         },
     )
-    with urllib.request.urlopen(request, timeout=timeout) as response:
+    with urllib.request.urlopen(request, timeout=timeout, context=ssl_context) as response:
         payload = json.loads(response.read().decode("utf-8"))
     return base64.b64decode(payload["data"][0]["b64_json"])
 
@@ -136,6 +137,7 @@ def main():
     parser.add_argument("--limit", type=int, default=16)
     parser.add_argument("--timeout", type=float, default=180)
     parser.add_argument("--retries", type=int, default=1)
+    parser.add_argument("--insecure-skip-tls-verify", action="store_true")
     parser.add_argument("--overwrite", action="store_true")
     parser.add_argument("--models-for-sheet", default=DEFAULT_MODELS_FOR_SHEET)
     parser.add_argument("--sheet-name", default="contact_sheet_with_gpt_image.jpg")
@@ -148,6 +150,7 @@ def main():
     cases = load_cases(args.cases, args.limit)
     out_dir = args.output_dir / "outputs" / "gpt_image"
     failures = []
+    ssl_context = ssl._create_unverified_context() if args.insecure_skip_tls_verify else None
 
     for case in cases:
         out_path = out_dir / f"{case['index']:03d}.jpg"
@@ -157,7 +160,16 @@ def main():
         last_error = None
         for attempt in range(args.retries + 1):
             try:
-                raw = post_edit(args.base_url, api_key, case, args.model, args.quality, args.size, args.timeout)
+                raw = post_edit(
+                    args.base_url,
+                    api_key,
+                    case,
+                    args.model,
+                    args.quality,
+                    args.size,
+                    args.timeout,
+                    ssl_context,
+                )
                 save_image(raw, out_path)
                 print(f"wrote gpt_image {case['index']:03d} {case['pair_id']}")
                 last_error = None
