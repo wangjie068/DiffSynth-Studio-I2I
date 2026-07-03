@@ -125,6 +125,12 @@ def write_contact_sheet(cases, models, output_dir, sheet_name):
     sheet.save(output_dir / sheet_name, quality=95)
 
 
+def retry_wait_seconds(error_code, attempt, retry_delay):
+    if error_code in {429, 500, 502, 503, 504}:
+        return retry_delay * (2 ** attempt)
+    return 2 * (attempt + 1)
+
+
 def main():
     parser = argparse.ArgumentParser(description="Add GPT Image edit outputs to product edit eval cases.")
     parser.add_argument("--cases", type=Path, default=Path("data/amazon_reviews_2023/base_model_eval/cases.json"))
@@ -136,7 +142,8 @@ def main():
     parser.add_argument("--size", default="1024x1024", choices=["1024x1024", "1536x1024", "1024x1536", "auto"])
     parser.add_argument("--limit", type=int, default=16)
     parser.add_argument("--timeout", type=float, default=180)
-    parser.add_argument("--retries", type=int, default=1)
+    parser.add_argument("--retries", type=int, default=5)
+    parser.add_argument("--retry-delay", type=float, default=30)
     parser.add_argument("--insecure-skip-tls-verify", action="store_true")
     parser.add_argument("--overwrite", action="store_true")
     parser.add_argument("--models-for-sheet", default=DEFAULT_MODELS_FOR_SHEET)
@@ -159,6 +166,7 @@ def main():
             continue
         last_error = None
         for attempt in range(args.retries + 1):
+            error_code = None
             try:
                 raw = post_edit(
                     args.base_url,
@@ -175,12 +183,15 @@ def main():
                 last_error = None
                 break
             except urllib.error.HTTPError as error:
+                error_code = error.code
                 detail = error.read().decode("utf-8", errors="replace")
                 last_error = f"HTTP {error.code}: {detail[:1000]}"
             except Exception as error:
                 last_error = str(error)
             if attempt < args.retries:
-                time.sleep(2 * (attempt + 1))
+                wait = retry_wait_seconds(error_code, attempt, args.retry_delay)
+                print(f"retry gpt_image {case['index']:03d} in {wait:.0f}s: {last_error}")
+                time.sleep(wait)
         if last_error:
             failures.append({"index": case["index"], "pair_id": case["pair_id"], "error": last_error})
             print(f"failed gpt_image {case['index']:03d}: {last_error}")
