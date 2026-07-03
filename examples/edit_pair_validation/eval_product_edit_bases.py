@@ -107,6 +107,31 @@ def load_pipe(model):
             ],
             processor_config=ModelConfig(model_id="Qwen/Qwen-Image-Edit", origin_file_pattern="processor/"),
         )
+    if model == "flux2kleinbase9b":
+        from diffsynth.pipelines.flux2_image import Flux2ImagePipeline, ModelConfig
+
+        return Flux2ImagePipeline.from_pretrained(
+            torch_dtype=torch.bfloat16,
+            device="cuda",
+            model_configs=[
+                ModelConfig(model_id="black-forest-labs/FLUX.2-klein-9B", origin_file_pattern="text_encoder/*.safetensors"),
+                ModelConfig(model_id="black-forest-labs/FLUX.2-klein-base-9B", origin_file_pattern="transformer/*.safetensors"),
+                ModelConfig(model_id="black-forest-labs/FLUX.2-klein-9B", origin_file_pattern="vae/diffusion_pytorch_model.safetensors"),
+            ],
+            tokenizer_config=ModelConfig(model_id="black-forest-labs/FLUX.2-klein-9B", origin_file_pattern="tokenizer/"),
+        )
+    if model == "hidream_o1":
+        from diffsynth.core.loader.config import ModelConfig
+        from diffsynth.pipelines.hidream_o1_image import HiDreamO1ImagePipeline
+
+        return HiDreamO1ImagePipeline.from_pretrained(
+            torch_dtype=torch.bfloat16,
+            device="cuda",
+            model_configs=[
+                ModelConfig(model_id="HiDream-ai/HiDream-O1-Image", origin_file_pattern="model-*.safetensors"),
+            ],
+            processor_config=ModelConfig(model_id="HiDream-ai/HiDream-O1-Image", origin_file_pattern="./"),
+        )
     if model == "boogu":
         from diffsynth.pipelines.boogu_image import BooguImagePipeline, ModelConfig
 
@@ -148,6 +173,28 @@ def infer(pipe, model, case, steps, seed, max_pixels):
             height=height,
             width=width,
             edit_image_auto_resize=True,
+        )
+    if model == "flux2kleinbase9b":
+        return pipe(
+            prompt,
+            edit_image=[source],
+            seed=seed,
+            rand_device="cuda",
+            num_inference_steps=steps,
+            height=height,
+            width=width,
+            cfg_scale=4,
+        )
+    if model == "hidream_o1":
+        return pipe(
+            prompt=prompt,
+            negative_prompt=" ",
+            edit_image=[source],
+            height=height,
+            width=width,
+            seed=seed,
+            num_inference_steps=steps,
+            cfg_scale=4.0,
         )
     return pipe(
         prompt=prompt,
